@@ -1,0 +1,8 @@
+# Build artifacts
+/whisk
+
+# Config artifacts (default ~/.config/whisk/; keep the tree clean)
+*.json.local
+
+# Editor/OS noise
+.DS_Store
