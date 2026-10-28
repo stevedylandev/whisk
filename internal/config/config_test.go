@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+func TestDefaultPathUsesDotConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	want := filepath.Join(home, ".config", "whisk", "config.json")
+	if got := DefaultPath(); got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadMigratesLegacyConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	legacy := `{"server":"wss://a.example/","name":"Ada","token":"st_a"}`

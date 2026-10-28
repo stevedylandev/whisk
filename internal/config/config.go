@@ -35,12 +35,14 @@ type Config struct {
 }
 
 // DefaultPath returns the config file path (~/.config/whisk/config.json).
+// It deliberately avoids os.UserConfigDir, which resolves to
+// ~/Library/Application Support on macOS, so the path is the same everywhere.
 func DefaultPath() string {
-	base, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		base = "."
+		home = "."
 	}
-	return filepath.Join(base, "whisk", "config.json")
+	return filepath.Join(home, ".config", "whisk", "config.json")
 }
 
 // Load reads the config file, returning an empty Config if it does not exist.
