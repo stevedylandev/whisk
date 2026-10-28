@@ -142,7 +142,7 @@ type chatModel struct {
 	replyTo    string
 	editingID  string
 
-	// emoji is the reaction picker opened with + on a selected message.
+	// emoji is the emoji picker, opened with + to react or /emoji to insert.
 	emoji emojiPicker
 
 	// showNotices toggles the transient-notices overlay (N key).

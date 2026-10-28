@@ -200,6 +200,61 @@ func TestEmojiPickerEscCancels(t *testing.T) {
 	}
 }
 
+// TestEmojiCommandInsertsIntoComposer: /emoji opens the picker from the
+// composer and enter puts the chosen emoji in the message instead of reacting.
+// It needs no reactions capability and no selected message.
+func TestEmojiCommandInsertsIntoComposer(t *testing.T) {
+	m := newTestChat(t, 1)
+	m.setFocus(focusComposer)
+	m.chat.composer.SetValue("/emoji tada")
+
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.chat.emoji.open || !m.chat.emoji.insert {
+		t.Fatalf("picker open=%v insert=%v, want an insert picker", m.chat.emoji.open, m.chat.emoji.insert)
+	}
+	if m.chat.emoji.query != "tada" {
+		t.Fatalf("query = %q, want tada", m.chat.emoji.query)
+	}
+	if v := m.View(); !strings.Contains(v, "insert emoji") {
+		t.Fatalf("picker title missing: %q", v)
+	}
+
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+	if cmd != nil {
+		t.Fatal("inserting an emoji must not send a reactions request")
+	}
+	if m.chat.emoji.open {
+		t.Fatal("enter did not close the picker")
+	}
+	if got := m.chat.composer.Value(); got != "🎉" {
+		t.Fatalf("composer = %q, want 🎉", got)
+	}
+	if m.chat.focus != focusComposer {
+		t.Fatalf("focus = %v, want the composer", m.chat.focus)
+	}
+}
+
+// TestEmojiCommandWithoutQuery inserts from the default list, and esc leaves
+// the composer alone.
+func TestEmojiCommandWithoutQuery(t *testing.T) {
+	m := newTestChat(t, 1)
+	m.setFocus(focusComposer)
+	m.chat.composer.SetValue("/emoji")
+
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.chat.emoji.open || !m.chat.emoji.insert {
+		t.Fatalf("picker open=%v insert=%v, want an insert picker", m.chat.emoji.open, m.chat.emoji.insert)
+	}
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.chat.emoji.open {
+		t.Fatal("esc did not close the picker")
+	}
+	if got := m.chat.composer.Value(); got != "" {
+		t.Fatalf("esc changed the composer to %q", got)
+	}
+}
+
 func TestEmojiPickerRendersInWindow(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{50, 15}, {80, 24}, {120, 40}} {
 		m := newTestChat(t, 1)

@@ -140,6 +140,7 @@ Composer text starting with `/` is a command:
 | `/thread TITLE`             | start a thread in the current room      |
 | `/move ROOM`                | move the selected message to a room     |
 | `/react EMOJI`              | react to the selected message           |
+| `/emoji [QUERY]`            | insert an emoji into your message       |
 | `/attach PATH [caption]`    | attach a file (`~/` expands; `tab` completes the path) |
 | `/avatar [PATH]`            | set (or, with no path, clear) your avatar |
 | `/help`                     | open the help popup, commands first, with the server's commands |

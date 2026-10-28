@@ -12,10 +12,12 @@ import (
 )
 
 // The emoji picker: `+` on a selected message opens a search field, and the
-// user types a name (or alias) to find an emoji to react with. The catalog
-// comes from emoji_data.go. Results show each emoji's native short name, and
-// matching is word-based fuzzy search, so "thumbs", "thumbsup", or "th up"
-// find 👍 without letting scattered letters match unrelated emoji.
+// user types a name (or alias) to find an emoji to react with. `/emoji` opens
+// the same picker from the composer and inserts the choice into the message
+// instead. The catalog comes from emoji_data.go. Results show each emoji's
+// native short name, and matching is word-based fuzzy search, so "thumbs",
+// "thumbsup", or "th up" find 👍 without letting scattered letters match
+// unrelated emoji.
 //
 // Flag pairs (two regional indicators) draw as a fixed-width flag marker:
 // terminals disagree on their advance width, which tears the picker's border
@@ -32,10 +34,12 @@ type emojiEntry struct {
 	words   []string // lower-case description, alias, tag and category words
 }
 
-// emojiPicker is the reaction picker's state. msgID is fixed when the picker
-// opens, so a message arriving while the user types cannot move the reaction.
+// emojiPicker is the picker's state. msgID is fixed when the picker opens, so
+// a message arriving while the user types cannot move the reaction. insert
+// marks the /emoji variant, which puts the choice in the composer instead.
 type emojiPicker struct {
 	open   bool
+	insert bool
 	msgID  string
 	query  string
 	cursor int
@@ -294,6 +298,14 @@ func (m *Model) openEmojiPicker() {
 	m.chat.emoji = emojiPicker{open: true, msgID: msg.MessageID}
 }
 
+// openEmojiInsert opens the picker from /emoji to put the chosen emoji in the
+// composer. Inserting text needs no selected message or reactions capability.
+func (m *Model) openEmojiInsert(query string) {
+	m.setFocus(focusComposer)
+	m.chat.emoji = emojiPicker{open: true, insert: true}
+	m.chat.emoji.setQuery(query)
+}
+
 // handleEmojiKey handles every key while the picker is open. Printable keys
 // extend the query, so j/k are typed rather than used for navigation.
 func (m *Model) handleEmojiKey(key tea.KeyMsg) []tea.Cmd {
@@ -310,8 +322,13 @@ func (m *Model) handleEmojiKey(key tea.KeyMsg) []tea.Cmd {
 		if p.cursor >= len(results) {
 			p.cursor = len(results) - 1
 		}
-		choice, id := results[p.cursor], p.msgID
+		choice, id, insert := results[p.cursor], p.msgID, p.insert
 		*p = emojiPicker{}
+		if insert {
+			m.chat.composer.InsertString(choice.char)
+			m.setFocus(focusComposer)
+			return m.maybeSendTyping()
+		}
 		if cmd := m.reactTo(id, choice.char); cmd != nil {
 			return []tea.Cmd{cmd}
 		}

@@ -29,8 +29,8 @@ func (m Model) emojiPickerRows() int {
 	return rows
 }
 
-// emojiPickerView renders the reaction picker: a search field, the matching
-// emoji, and the keys that drive it.
+// emojiPickerView renders the emoji picker: a search field, the matching
+// emoji, and the keys that drive it, for reacting or for inserting text.
 func (m Model) emojiPickerView() string {
 	p := m.chat.emoji
 	results := emojiMatches(p.query)
@@ -53,7 +53,11 @@ func (m Model) emojiPickerView() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("react with emoji") + "\n")
+	title, action := "react with emoji", "enter react"
+	if p.insert {
+		title, action = "insert emoji", "enter insert"
+	}
+	b.WriteString(titleStyle.Render(title) + "\n")
 	b.WriteString(accentStyle.Render("> ") + p.query + accentStyle.Render("▏") + "\n")
 
 	shown := 0
@@ -77,7 +81,7 @@ func (m Model) emojiPickerView() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n" + helpStyle.Render("↑/↓ choose · enter react · esc cancel"))
+	b.WriteString("\n" + helpStyle.Render("↑/↓ choose · "+action+" · esc cancel"))
 
 	// Size the box to a stable width rather than the longest result, so it
 	// does not jump while the query changes.

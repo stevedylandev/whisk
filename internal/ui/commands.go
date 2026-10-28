@@ -134,6 +134,10 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			return nil
 		}
 		return m.toggleReact(args[0])
+	case "emoji":
+		// Open the picker in the composer; any argument pre-fills its search.
+		m.openEmojiInsert(strings.Join(args, " "))
+		return nil
 	case "attach", "upload":
 		if len(args) < 1 {
 			m.setStatus("usage: /attach PATH [caption] (tab completes paths)", true)

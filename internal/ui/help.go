@@ -64,6 +64,7 @@ var helpCommands = helpSection{"commands", []helpEntry{
 	{"/thread TITLE", "start a thread in this room"},
 	{"/move ROOM", "move the selected message"},
 	{"/react EMOJI", "react to the selected message"},
+	{"/emoji [QUERY]", "insert an emoji into your message"},
 	{"/attach PATH [caption]", "attach a file (~/ expands; tab completes)"},
 	{"/avatar [PATH]", "set (or clear) your avatar"},
 	{"/server CMD [ARGS]", "send /CMD to the server, even one the client handles"},
@@ -76,7 +77,7 @@ var helpCommands = helpSection{"commands", []helpEntry{
 var clientCommands = map[string]bool{
 	"help": true, "nick": true, "status": true, "mute": true, "join": true,
 	"leave": true, "new": true, "thread": true, "move": true, "react": true,
-	"attach": true, "upload": true, "server": true, "s": true,
+	"emoji": true, "attach": true, "upload": true, "server": true, "s": true,
 }
 
 // serverHelp tracks a session's fetch of the server's /help reply (§4.1).
