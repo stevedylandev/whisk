@@ -2,6 +2,9 @@
 
 ![demo](./assets/whisk-demo.jpg)
 
+>[!WARNING]
+>This app is still in early development
+
 A terminal client for the [Apron Chat Protocol](https://apron.chat/), built with
 [Charmbracelet Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
