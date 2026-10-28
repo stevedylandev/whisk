@@ -24,7 +24,9 @@ go install github.com/stevedylandev/whisk@latest
 Or build from source:
 
 ```sh
-go build -o whisk .
+git clone https://github.com/stevedylandev/whisk
+cd whisk
+go install .
 ```
 
 ## Usage
@@ -48,18 +50,13 @@ Flags:
 | `--theme`  | Color theme: `dark` (default) or `light`; or set `"theme"` in the config |
 
 >[!NOTE]
->If you signed in to a web client with a passkey, try running `/invite-device [NAME]` in the web ui to get a token you can use in whisk
+>If you signed in to a web client with a passkey, try running `/invite-device NAME` in the web ui to get a token you can use in whisk
 
 ### Servers
 
 whisk keeps a list of servers and stays connected to all of them at once. The
 sidebar groups rooms under a header per server, showing its connection state
-and your name there; moving through the rooms moves between servers. Private
-rooms sit under their own **private** subheader, and a one-to-one private room
-is labelled with the other person's name rather than the server's title.
-
-Each server's URL, guest name, and latest auth token are saved to the config
-file once you first sign in:
+and your name there; moving through the rooms moves between servers.
 
 ```json
 {
@@ -69,12 +66,6 @@ file once you first sign in:
   ]
 }
 ```
-
-On startup, saved servers connect and resume in the background and the app opens
-straight to the chat. A server that cannot sign in on its own (no saved token,
-or the token was rejected) is marked **sign in** in the sidebar: select its
-header and press `enter` to sign in. With no saved servers, whisk opens the
-add-server prompt.
 
 ### Sign-in
 
@@ -100,7 +91,7 @@ a new identity on each use.
 
 Passkey (`webauthn`) sign-in is not implemented: a passkey is bound to the
 domain that registered it, so third-party clients sign in with a token issued by
-the server's web client instead.
+the server's web client instead. This is usually done with a command like `/invite-device NAME`
 
 ## Keys
 
