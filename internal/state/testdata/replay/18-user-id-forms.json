@@ -1,0 +1,42 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "User IDs in email and federated forms are ordinary keys",
+  "description": "user_ids are opaque: email addresses, a plus-tagged address, and federated forms with @ and : key messages, mentions, reactions, member lists, and memberships like any other ID. Member lists and reaction user_ids sort by string order, where + and : sort before @.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#422-membership",
+    "PROTOCOL.md#47-reactions",
+    "PROTOCOL.md#a3-prefixes-in-text"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"90","title":"General","latest_log_id":"90","history_log_id":"90","members":[{"user_id":"ada@example.com","name":"Ada"},{"user_id":"carol@b.example","name":"Carol"}]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"ada@example.com","name":"Ada"},"body":{"text":"@carol@b.example hello","mentions":["carol@b.example"]}}}},
+        {"receive":{"method":"message","params":{"message_id":"110","log_id":"110","room_id":"general","from":{"user_id":"carol@b.example","name":"Carol"},"body":{"text":"@ada@example.com hi","mentions":["ada@example.com"]}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"120","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol:b.example","name":"Carol (bridge)"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"121","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"ada+chat@example.com"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"125","room_id":"general","members":[{"user":{"user_id":"carol:b.example","name":"Carol (bridge)"},"joined":true}]}]}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {
+        "room_id": "general", "log_id": "90", "title": "General",
+        "members": [
+          {"user_id":"ada@example.com","name":"Ada"},
+          {"user_id":"carol:b.example","name":"Carol (bridge)"},
+          {"user_id":"carol@b.example","name":"Carol"}
+        ],
+        "messages": [
+          {"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"ada@example.com","name":"Ada"},"body":{"text":"@carol@b.example hello","mentions":["carol@b.example"]},"reactions":[{"emoji":"👍","user_ids":["ada+chat@example.com","carol:b.example"]}]},
+          {"message_id":"110","log_id":"110","room_id":"general","from":{"user_id":"carol@b.example","name":"Carol"},"body":{"text":"@ada@example.com hi","mentions":["ada@example.com"]}}
+        ]
+      }
+    ]
+  }
+}

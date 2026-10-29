@@ -1,0 +1,50 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Embedded snapshots install by the replay rule",
+  "description": "reply_to snapshots (objects with a log_id) install their message in its own room exactly like any other snapshot: newer ones replace, stale ones are ignored. Bare references ({message_id} only) install nothing, and a dangling reference still renders.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#42-rooms"
+  ],
+  "variants": [
+    {
+      "name": "embedded-only",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"ops","log_id":"103","title":"Ops","description":"Ops chatter","latest_log_id":"103","history_log_id":"103"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"105","log_id":"105","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re target"},"reply_to":{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"106","log_id":"106","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re intro"},"reply_to":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"107","log_id":"107","room_id":"ops","from":{"user_id":"carol"},"body":{"text":"dangling"},"reply_to":{"message_id":"99"}}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter"},"reply_to":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"target"}}}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history-ops","result":{"rooms":[{"room_id":"ops","log_id":"103","title":"Ops","description":"Ops chatter"}],"messages":[{"message_id":"105","log_id":"105","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re target"},"reply_to":{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}}},{"message_id":"106","log_id":"106","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re intro"},"reply_to":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}},{"message_id":"107","log_id":"107","room_id":"ops","from":{"user_id":"carol"},"body":{"text":"dangling"},"reply_to":{"message_id":"99"}}],"first_log_id":"103","last_log_id":"107","more":false,"latest_log_id":"107","history_log_id":"103"}}},
+        {"receive":{"id":"history-general","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"target"}},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter"},"reply_to":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"target"}}},{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}},{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}],"first_log_id":"100","last_log_id":"104","more":false,"latest_log_id":"104","history_log_id":"100"}}}
+      ]
+    },
+    {
+      "name": "late-stale-embed",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"target"}}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter"},"reply_to":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"target"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"ops","log_id":"103","title":"Ops","description":"Ops chatter","latest_log_id":"103","history_log_id":"103"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"105","log_id":"105","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re target"},"reply_to":{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"106","log_id":"106","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re intro"},"reply_to":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"107","log_id":"107","room_id":"ops","from":{"user_id":"carol"},"body":{"text":"dangling"},"reply_to":{"message_id":"99"}}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"102","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited target"}},{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter, edited"},"reply_to":{"message_id":"100"}}]},
+      {"room_id":"ops","log_id":"103","title":"Ops","description":"Ops chatter","messages":[{"message_id":"105","log_id":"105","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re target"},"reply_to":{"message_id":"100"}},{"message_id":"106","log_id":"106","room_id":"ops","from":{"user_id":"bob"},"body":{"text":"re intro"},"reply_to":{"message_id":"101"}},{"message_id":"107","log_id":"107","room_id":"ops","from":{"user_id":"carol"},"body":{"text":"dangling"},"reply_to":{"message_id":"99"}}]}
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Live, raw, paged, and compacted history converge",
+  "description": "One room log mixing room records, message snapshots, and reaction sets reaches the same state live, as one raw page, as two pages delivered newest-first (limit 5 counts records of every kind), and as a compacted page with folded reaction sets.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#43-history",
+    "PROTOCOL.md#47-reactions"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"105","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉","👍"]}]}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}},"latest_log_id":"106","history_log_id":"100"}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"107","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":[]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"108","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👀"]}]}}}
+      ]
+    },
+    {
+      "name": "raw",
+      "steps": [
+        {"receive":{"id":"history","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"},{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}}}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}},{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"reactions":[{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]},{"log_id":"105","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉","👍"]}]},{"log_id":"107","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":[]}]},{"log_id":"108","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👀"]}]}],"first_log_id":"100","last_log_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}}
+      ]
+    },
+    {
+      "name": "paged-newest-first",
+      "steps": [
+        {"receive":{"id":"history-2","result":{"rooms":[{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}}}],"messages":[],"reactions":[{"log_id":"105","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉","👍"]}]},{"log_id":"107","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":[]}]},{"log_id":"108","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👀"]}]}],"first_log_id":"105","last_log_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}},
+        {"receive":{"id":"history-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}},{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"reactions":[{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}],"first_log_id":"100","last_log_id":"104","more":true,"latest_log_id":"108","history_log_id":"100"}}}
+      ]
+    },
+    {
+      "name": "compacted",
+      "steps": [
+        {"receive":{"id":"history","result":{"rooms":[{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}}}],"messages":[{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}},{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"reactions":[{"log_id":"107","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":[]},{"from":{"user_id":"carol"},"emojis":["🎉","👍"]}]},{"log_id":"108","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👀"]}]}],"first_log_id":"100","last_log_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}},"messages":[{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"},"reactions":[{"emoji":"🎉","user_ids":["carol"]},{"emoji":"👍","user_ids":["carol"]}]},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"},"reactions":[{"emoji":"👀","user_ids":["alice"]}]}]}
+    ]
+  }
+}

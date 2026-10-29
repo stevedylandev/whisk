@@ -1,0 +1,25 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Null is a stored value",
+  "description": "null has no deletion meaning: null values inside ext and embeds are stored and projected literally, distinct from absent keys.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"},"ext":{"example.org":{"flag":true}}}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original","embeds":[{"kind":"ext:file","url":"https://example.org/a","mime":null}]},"ext":{"example.org":null,"example.net":{"value":null}}}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original","embeds":[{"kind":"ext:file","url":"https://example.org/a","mime":null}]},"ext":{"example.org":null,"example.net":{"value":null}}}]}
+    ]
+  }
+}

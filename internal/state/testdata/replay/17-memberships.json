@@ -1,0 +1,57 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Memberships",
+  "description": "A membership is a logged record keyed by (room_id, user.user_id); the greatest log_id wins, from any source or arrival order. A room's complete members list (room_list with members, room_update joined) starts its member list as of the room's latest_log_id in that frame: memberships at or below it are already in it, greater ones apply on top, whichever arrives first. A compacted history record folds several users' memberships under the greatest folded log_id and keeps leaves. A membership's user is the recorded object and projects as given.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#421-listing",
+    "PROTOCOL.md#422-membership",
+    "PROTOCOL.md#43-history"
+  ],
+  "variants": [
+    {
+      "name": "listing-then-live",
+      "steps": [
+        {"receive":{"id":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","latest_log_id":"100","history_log_id":"90","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}]}],"users":[{"user_id":"alice","name":"Alice"},{"user_id":"bob","name":"Bob"}]}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}],"messages":[]}]}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"99","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":false}]}]}}}
+      ]
+    },
+    {
+      "name": "live-then-listing",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"90","title":"General","latest_log_id":"100","history_log_id":"90","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}]}],"users":[{"user_id":"alice","name":"Alice"},{"user_id":"bob","name":"Bob"}]}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"90","title":"General"}],"memberships":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":true}]},{"log_id":"92","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":true}]},{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]},{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}],"first_log_id":"90","last_log_id":"102","more":false,"latest_log_id":"102","history_log_id":"90"}}}
+      ]
+    },
+    {
+      "name": "compacted",
+      "steps": [
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"90","title":"General"}],"memberships":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":true},{"user":{"user_id":"bob","name":"Bob"},"joined":false},{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}],"first_log_id":"90","last_log_id":"102","more":false,"latest_log_id":"102","history_log_id":"90"}}}
+      ]
+    },
+    {
+      "name": "live-before-older-history",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"90","title":"General"}],"memberships":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":true}]},{"log_id":"92","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":true}]}],"first_log_id":"90","last_log_id":"92","more":true,"latest_log_id":"102","history_log_id":"90"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"alice","name":"Alice"},{"user_id":"carol","name":"Carol"}],"messages":[]}
+    ]
+  }
+}

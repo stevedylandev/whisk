@@ -1,0 +1,30 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Repeated and stale records are ignored",
+  "description": "Overlapping live and history delivery repeats room records, snapshots, and reaction sets; equal or lower log_ids never replace the kept record.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#43-history"
+  ],
+  "variants": [
+    {
+      "name": "overlap",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"50","title":"General","latest_log_id":"110","history_log_id":"50"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}}},
+        {"receive":{"id":"history","result":{"rooms":[{"room_id":"general","log_id":"50","title":"General"}],"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"reactions":[{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}],"first_log_id":"50","last_log_id":"110","more":false,"latest_log_id":"110","history_log_id":"50"}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"50","title":"General","latest_log_id":"110","history_log_id":"50"}]}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","log_id":"50","title":"General","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"},"reactions":[{"emoji":"👍","user_ids":["bob"]}]}]}
+    ]
+  }
+}

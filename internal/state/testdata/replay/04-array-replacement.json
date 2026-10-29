@@ -1,0 +1,24 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Arrays are replaced in full",
+  "description": "Arrays in a snapshot replace the previous array; elements are never merged by index.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#44-edit"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"ext:file","url":"https://example.org/a"},{"kind":"ext:image"}]}}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"ext:file","url":"https://example.org/b"}]}}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"ext:file","url":"https://example.org/b"}]}}]}
+    ]
+  }
+}

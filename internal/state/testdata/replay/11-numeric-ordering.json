@@ -1,0 +1,39 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "log_ids compare numerically",
+  "description": "Greatest log_id wins by numeric comparison (\"10\" beats \"9\", \"13\" beats \"8\", \"101\" beats \"99\") for every record kind, and messages are ordered by numeric message_id (\"2\" < \"12\" < \"100\").",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#43-history"
+  ],
+  "variants": [
+    {
+      "name": "out-of-order",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"alice"},"body":{"text":"twelve"}}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"13","title":"Thirteen","latest_log_id":"13","history_log_id":"2"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"2","log_id":"10","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ten"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"101","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👀"]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"hundred"}}}},
+        {"receive":{"method":"message","params":{"message_id":"2","log_id":"9","room_id":"general","from":{"user_id":"alice"},"body":{"text":"nine"}}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"8","title":"Eight","latest_log_id":"8","history_log_id":"2"}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"99","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["🎉"]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"2","log_id":"2","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"11","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}}
+      ]
+    },
+    {
+      "name": "pages-newest-first",
+      "steps": [
+        {"receive":{"id":"history-2","result":{"rooms":[{"room_id":"general","log_id":"13","title":"Thirteen"}],"messages":[{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"alice"},"body":{"text":"twelve"}},{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"hundred"}}],"reactions":[{"log_id":"99","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["🎉"]}]},{"log_id":"101","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👀"]}]}],"first_log_id":"12","last_log_id":"101","more":false,"latest_log_id":"101","history_log_id":"2"}}},
+        {"receive":{"id":"history-1","result":{"rooms":[{"room_id":"general","log_id":"8","title":"Eight"}],"messages":[{"message_id":"2","log_id":"2","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}},{"message_id":"2","log_id":"9","room_id":"general","from":{"user_id":"alice"},"body":{"text":"nine"}},{"message_id":"2","log_id":"10","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ten"}}],"reactions":[{"log_id":"11","message_id":"2","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}],"first_log_id":"2","last_log_id":"11","more":true,"latest_log_id":"101","history_log_id":"2"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","log_id":"13","title":"Thirteen","messages":[{"message_id":"2","log_id":"10","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ten"},"reactions":[{"emoji":"👀","user_ids":["bob"]}]},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"alice"},"body":{"text":"twelve"}},{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"hundred"}}]}
+    ]
+  }
+}

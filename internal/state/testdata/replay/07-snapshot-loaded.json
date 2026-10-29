@@ -1,0 +1,24 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "A history snapshot replaces a loaded message",
+  "description": "A newer snapshot from history replaces the message already loaded from live delivery.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#43-history"
+  ],
+  "variants": [
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"first_log_id":"110","last_log_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}]}
+    ]
+  }
+}

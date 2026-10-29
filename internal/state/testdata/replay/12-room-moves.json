@@ -1,0 +1,51 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Moves re-home messages between a room and its thread",
+  "description": "A save with a different room_id moves the message into thread room 110 (a room with parent_room_id). The move snapshot is in both rooms' history; the message is re-homed, never deleted, and older source-room snapshots and reaction records cannot pull it back. Reactions follow the message.",
+  "references": [
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#42-rooms",
+    "PROTOCOL.md#43-history",
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#47-reactions"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}},
+        {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"103","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]}]}]}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","description":"Deploy?","latest_log_id":"110","history_log_id":"110"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}}},
+        {"expect":{"rooms":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","description":"Deploy?","messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]}]},{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}]}]}},
+        {"receive":{"method":"reactions","params":{"log_id":"112","message_id":"102","room_id":"110","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"message","params":{"message_id":"113","log_id":"113","room_id":"110","from":{"user_id":"alice"},"body":{"text":"thanks"}}}}
+      ]
+    },
+    {
+      "name": "source-then-thread-history",
+      "steps": [
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}},{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}],"reactions":[{"log_id":"103","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_log_id":"100","last_log_id":"111","more":false,"latest_log_id":"111","history_log_id":"100"}}},
+        {"expect":{"rooms":[{"room_id":"110","messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]}]},{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}]}]}},
+        {"receive":{"id":"history-thread","result":{"rooms":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","description":"Deploy?"}],"messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}},{"message_id":"113","log_id":"113","room_id":"110","from":{"user_id":"alice"},"body":{"text":"thanks"}}],"reactions":[{"log_id":"112","message_id":"102","room_id":"110","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_log_id":"110","last_log_id":"113","more":false,"latest_log_id":"113","history_log_id":"110"}}}
+      ]
+    },
+    {
+      "name": "thread-then-stale-source",
+      "steps": [
+        {"receive":{"id":"history-thread","result":{"rooms":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","description":"Deploy?"}],"messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}},{"message_id":"113","log_id":"113","room_id":"110","from":{"user_id":"alice"},"body":{"text":"thanks"}}],"reactions":[{"log_id":"112","message_id":"102","room_id":"110","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_log_id":"110","last_log_id":"113","more":false,"latest_log_id":"113","history_log_id":"110"}}},
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}],"reactions":[{"log_id":"103","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_log_id":"100","last_log_id":"103","more":true,"latest_log_id":"111","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","description":"Deploy?","messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]},{"message_id":"113","log_id":"113","room_id":"110","from":{"user_id":"alice"},"body":{"text":"thanks"}}]},
+      {"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}]}
+    ]
+  }
+}

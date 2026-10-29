@@ -1,0 +1,53 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Tombstones survive stale replay and hide reactions",
+  "description": "A deletion snapshot (no body) wins over the older content snapshot however they arrive. A redacted snapshot, a tombstone at the content's own log_id, also wins, and a stale copy of the content at that log_id does not bring it back. Reaction state for the tombstoned message is kept but not projected.",
+  "references": [
+    "PROTOCOL.md#23-records-and-replay",
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#47-reactions"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"},"reactions":[{"emoji":"👍","user_ids":["bob"]}]}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉"]}]}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history","result":{"rooms":[],"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]},{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_log_id":"100","last_log_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}}
+      ]
+    },
+    {
+      "name": "compacted-history",
+      "steps": [
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]},{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_log_id":"100","last_log_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}}
+      ]
+    },
+    {
+      "name": "redacted",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"first_log_id":"100","last_log_id":"100","more":false,"latest_log_id":"110","history_log_id":"100"}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"deleted":true}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"deleted":true}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}]}
+    ]
+  }
+}

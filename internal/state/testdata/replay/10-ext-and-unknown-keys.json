@@ -1,0 +1,39 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "ext survives; unknown and prototype-like keys are harmless",
+  "description": "ext on messages and rooms is kept exactly, including \"__proto__\" keys. Unknown top-level keys (including \"__proto__\", \"hasOwnProperty\", \"constructor\", \"toString\") may be dropped and never break replay; they are outside the projection. Room IDs and user IDs such as \"__proto__\" and \"constructor\" are ordinary keys.",
+  "references": [
+    "PROTOCOL.md#1-transport--framing",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#47-reactions",
+    "PROTOCOL.md#412-ext"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"90","title":"General","ext":{"__proto__":{"room":true}},"future_room_key":{"x":1},"latest_log_id":"111","history_log_id":"90"}]}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"__proto__","log_id":"95","title":"Prototype","constructor":"not a function","latest_log_id":"105","history_log_id":"95"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"unknowns","embeds":[{"kind":"ext:future","payload":{"items":[1,null,false]}}]},"ext":{"example.org":{"nested":[true,null],"__proto__":{"polluted":true}},"__proto__":{"opaque":true}},"custom":{"nested":null},"__proto__":{"polluted":true},"hasOwnProperty":false,"future_field":[1]}}},
+        {"receive":{"method":"message","params":{"message_id":"105","log_id":"105","room_id":"__proto__","from":{"user_id":"constructor"},"body":{"text":"prototype room"},"toString":"x"}}},
+        {"receive":{"method":"reactions","params":{"log_id":"110","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"__proto__"},"emojis":["👍"],"future":1}],"future_key":true}}},
+        {"receive":{"method":"reactions","params":{"log_id":"111","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"constructor"},"emojis":["👍"]}]}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"90","title":"General","ext":{"__proto__":{"room":true}},"future_room_key":{"x":1}}],"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"unknowns","embeds":[{"kind":"ext:future","payload":{"items":[1,null,false]}}]},"ext":{"example.org":{"nested":[true,null],"__proto__":{"polluted":true}},"__proto__":{"opaque":true}},"custom":{"nested":null},"__proto__":{"polluted":true},"hasOwnProperty":false,"future_field":[1]}],"reactions":[{"log_id":"111","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"__proto__"},"emojis":["👍"]},{"from":{"user_id":"constructor"},"emojis":["👍"]}]}],"first_log_id":"90","last_log_id":"111","more":false,"latest_log_id":"111","history_log_id":"90","future_result_key":{"x":1}}}},
+        {"receive":{"id":"history-proto","result":{"rooms":[{"room_id":"__proto__","log_id":"95","title":"Prototype","constructor":"not a function"}],"messages":[{"message_id":"105","log_id":"105","room_id":"__proto__","from":{"user_id":"constructor"},"body":{"text":"prototype room"},"toString":"x"}],"first_log_id":"95","last_log_id":"105","more":false,"latest_log_id":"105","history_log_id":"95"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"__proto__","log_id":"95","title":"Prototype","messages":[{"message_id":"105","log_id":"105","room_id":"__proto__","from":{"user_id":"constructor"},"body":{"text":"prototype room"}}]},
+      {"room_id":"general","log_id":"90","title":"General","ext":{"__proto__":{"room":true}},"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"unknowns","embeds":[{"kind":"ext:future","payload":{"items":[1,null,false]}}]},"ext":{"example.org":{"nested":[true,null],"__proto__":{"polluted":true}},"__proto__":{"opaque":true}},"reactions":[{"emoji":"👍","user_ids":["__proto__","constructor"]}]}]}
+    ]
+  }
+}

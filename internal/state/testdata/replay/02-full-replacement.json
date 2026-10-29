@@ -1,0 +1,33 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Omitted fields are removed rather than merged",
+  "description": "A later snapshot replaces the whole message: omitted body.format, reply_to, and ext keys disappear. A snapshot carries its complete ext, and clients replace ext whole rather than merging it; only writes merge ext.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"old","format":"markdown","embeds":[]},"reply_to":{"message_id":"90"},"ext":{"example.org":{"a":1,"b":2},"example.net":{"keep":true}}}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"old","format":"markdown","embeds":[]},"reply_to":{"message_id":"90"},"ext":{"example.org":{"a":1,"b":2},"example.net":{"keep":true}}}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"},"ext":{"example.org":{"a":3}}}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"old","format":"markdown","embeds":[]},"reply_to":{"message_id":"90"},"ext":{"example.org":{"a":1,"b":2},"example.net":{"keep":true}}},{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"},"ext":{"example.org":{"a":3}}}],"first_log_id":"100","last_log_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"},"ext":{"example.org":{"a":3}}}]}
+    ]
+  }
+}

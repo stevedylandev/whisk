@@ -1,0 +1,35 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Transient notices are never snapshots",
+  "description": "A message notification without message_id (a ~private notice, with or without room_id) is transient: it installs nothing, replaces nothing, and leaves the snapshots around it and their order alone. A logged ~server notice is an ordinary snapshot in the room it refers to: there is no ~server room.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#a1-system-identities-and-scoped-notices"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}}},
+        {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"~private","name":"Only you"},"body":{"text":"Welcome to General!","format":"markdown"}}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}}}},
+        {"receive":{"method":"message","params":{"from":{"user_id":"~private","name":"Only you"},"body":{"text":"Unknown command"}}}},
+        {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"~server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"~private","name":"Only you"},"body":{"text":"Welcome to General!","format":"markdown"}}}},
+        {"receive":{"id":"history-general","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"~server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}],"first_log_id":"100","last_log_id":"102","more":false,"latest_log_id":"102","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"~server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}]}
+    ]
+  }
+}

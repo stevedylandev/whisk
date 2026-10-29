@@ -1,0 +1,49 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Room records replace in full",
+  "description": "A room record is complete state at its log_id: omitted title and ext are cleared, a stale record is ignored, and a thread is a room with parent_room_id. Room records come from room_list results, room_update joined and updated, and history rooms alike; a history page may omit an empty array.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#42-rooms",
+    "PROTOCOL.md#421-listing",
+    "PROTOCOL.md#423-updates",
+    "PROTOCOL.md#43-history",
+    "PROTOCOL.md#412-ext"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"id":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","ext":{"example.org":{"color":"blue"}},"latest_log_id":"100","history_log_id":"100"}]}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","ext":{"example.org":{"color":"blue"}},"messages":[]}]}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter: deploys, *incidents*.","format":"markdown"}}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"102","title":"General","description":"Ops chatter: deploys, *incidents*.","latest_log_id":"102","history_log_id":"100"}]}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"102","title":"General","description":"Ops chatter: deploys, *incidents*.","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter: deploys, *incidents*.","format":"markdown"}}]}]}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"103","description":"Ops chatter: deploys, *incidents*.","latest_log_id":"103","history_log_id":"100"}]}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"100","title":"General","ext":{"example.org":{"color":"blue"}},"latest_log_id":"100","history_log_id":"100"}]}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"104","log_id":"104","parent_room_id":"general","title":"Side","latest_log_id":"104","history_log_id":"104"}]}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General","ext":{"example.org":{"color":"blue"}}},{"room_id":"general","log_id":"102","title":"General","description":"Ops chatter: deploys, *incidents*."},{"room_id":"general","log_id":"103","description":"Ops chatter: deploys, *incidents*."}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter: deploys, *incidents*.","format":"markdown"}}],"first_log_id":"100","last_log_id":"103","more":false,"latest_log_id":"103","history_log_id":"100"}}},
+        {"receive":{"id":"history-thread","result":{"rooms":[{"room_id":"104","log_id":"104","parent_room_id":"general","title":"Side"}],"first_log_id":"104","last_log_id":"104","more":false,"latest_log_id":"104","history_log_id":"104"}}}
+      ]
+    },
+    {
+      "name": "compacted",
+      "steps": [
+        {"receive":{"id":"history-thread","result":{"rooms":[{"room_id":"104","log_id":"104","parent_room_id":"general","title":"Side"}],"first_log_id":"104","last_log_id":"104","more":false,"latest_log_id":"104","history_log_id":"104"}}},
+        {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"103","description":"Ops chatter: deploys, *incidents*."}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter: deploys, *incidents*.","format":"markdown"}}],"first_log_id":"100","last_log_id":"103","more":false,"latest_log_id":"103","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"104","log_id":"104","parent_room_id":"general","title":"Side","messages":[]},
+      {"room_id":"general","log_id":"103","description":"Ops chatter: deploys, *incidents*.","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Ops chatter: deploys, *incidents*.","format":"markdown"}}]}
+    ]
+  }
+}

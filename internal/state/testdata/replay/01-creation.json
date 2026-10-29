@@ -1,0 +1,30 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Creation snapshot",
+  "description": "A flat, self-describing creation snapshot (log_id == message_id) installs a message in its room, whether it arrives live or in a history page.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#43-history"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}}
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}],"first_log_id":"100","last_log_id":"100","more":false,"latest_log_id":"100","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}]}
+    ]
+  }
+}

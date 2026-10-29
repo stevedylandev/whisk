@@ -135,6 +135,34 @@ type Message struct {
 	From       *User           `json:"from,omitempty"`
 	Deleted    bool            `json:"deleted,omitempty"`
 	Ext        json.RawMessage `json:"ext,omitempty"`
+
+	// BodyRaw and FromRaw preserve the exact JSON of the body and from objects
+	// as received, so unknown keys (e.g. a future embed field) and nulls
+	// survive re-projection (§2.3, "copied exactly"). They are never sent.
+	BodyRaw json.RawMessage `json:"-"`
+	FromRaw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes a message and additionally keeps the raw JSON of its
+// body and from objects, so unknown keys and literal nulls inside them are not
+// lost when the message is projected back out.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type alias Message
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = Message(a)
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(data, &obj) == nil {
+		if raw, ok := obj["body"]; ok {
+			m.BodyRaw = raw
+		}
+		if raw, ok := obj["from"]; ok {
+			m.FromRaw = raw
+		}
+	}
+	return nil
 }
 
 // MessageResult is the result of a message creation or save.

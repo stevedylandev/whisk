@@ -176,8 +176,12 @@ own handlers, because they fall back instead of failing.
 rules, and the UI only reads the result:
 
 - **Messages** follow the replay rule: the greatest `log_id` wins, and a
-  tombstone wins a tie. A snapshot with `prev_room_id` is a move, so the copy
-  in the old room is removed. `Room.Order` stays sorted by `message_id`.
+  tombstone wins a tie. A snapshot whose `room_id` differs from the previous
+  snapshot's is a move (a `prev_room_id` also removes the stale source copy),
+  so the message is re-homed to its new room. A `reply_to` object with a
+  `log_id` is an embedded snapshot and installs in its own room (§3.5.4).
+  `Room.Order` stays sorted by `message_id`. The winning snapshot is also
+  indexed in `Store.messages` (used by `MessageByID`).
 - **Notices.** A message without `message_id` is a transient notice
   (§3.5.3). It is buffered in `notices` and never installed as a message.
 - **Users** take a complete object (`setUserComplete`) from `auth`, `me`,
@@ -185,8 +189,15 @@ rules, and the UI only reads the result:
   (`mergeCurrentUser`) from `user` notifications. In a merge, a field that is
   present but empty clears the kept value, so the raw JSON is checked to see
   which fields were sent.
-- **Reactions** store each user's complete emoji set per message.
+- **Reactions** keep each user's complete emoji set per message, replayed by
+  `log_id` (§4.7): the greatest wins, an empty set clears, duplicates collapse.
   `ReactionTotals` adds them up for display.
+- **Members** are a base list (`room_list`/`room_update` `members`, complete as
+  of the frame's `latest_log_id`) overlaid with membership records above that
+  position, each replayed by `log_id` (§4.2.1–4.2.2).
+- **Projection.** `Store.Projection()` renders the logical projection the wire
+  fixtures assert: rooms sorted by `room_id`, messages by numeric `message_id`,
+  members by `user_id`, and reactions folded per emoji.
 - **History cursors.** Each room tracks `FirstLogID`, `MoreBack`, `Loaded`,
   `Loading` and a recovery `Checkpoint`. The combined room-less log has the same
   fields in `Store.Log`.
@@ -256,6 +267,11 @@ current fields are written; legacy fields are migrated in `migrate`.
 
 - `internal/protocol`, `internal/config` and `internal/state` are plain unit
   tests.
+- `internal/state/replay_test.go` drives the store through the official Apron
+  wire replay fixtures (vendored in `internal/state/testdata/replay/` from
+  https://github.com/shazow/apron) and checks `Store.Projection()` against
+  their expected state, both literal and with `jsonrpc` injected into each
+  frame.
 - `internal/client` tests run against an in-process `httptest` WebSocket
   server.
 - `internal/ui` tests build a `Model`, feed it messages through `Update` or

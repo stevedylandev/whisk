@@ -28,8 +28,18 @@ type Store struct {
 	users     map[string]*protocol.User
 	nameUsers map[string]map[string]bool // display name -> set of user_ids
 
-	// reactions maps message_id -> user_id -> the user's complete emoji set.
-	reactions map[string]map[string][]string
+	// messages indexes the winning snapshot of every loaded message by
+	// message_id, across rooms. It is the source of truth for replay; the
+	// per-room Messages/Order views are kept in sync for the UI.
+	messages map[string]*protocol.Message
+
+	// reactions maps message_id -> user_id -> the user's winning reaction set
+	// (its complete emoji set at the greatest log_id seen, §4.7).
+	reactions map[string]map[string]reactionSet
+
+	// memberships maps room_id -> user_id -> the winning membership record
+	// (§4.2.2), kept apart from the room's base member list.
+	memberships map[string]map[string]*membershipRec
 
 	// typing maps room_id -> user_id -> typing expiry (transient).
 	typing map[string]map[string]time.Time
@@ -120,18 +130,44 @@ type Room struct {
 	// (e.g. from history) must not overwrite them.
 	LatestLogID  string
 	HistoryLogID *string
+
+	// Member-list state (§4.2.1): baseMembers is the complete member list the
+	// last room_list/room_update joined frame carried, as of memberPos (the
+	// frame's latest_log_id; "" when it carried none). membersKnown reports
+	// whether anything is known about the room's members. Memberships above
+	// memberPos overlay baseMembers; Members is the computed projection.
+	baseMembers  map[string]*protocol.User
+	memberPos    string
+	membersKnown bool
+}
+
+// reactionSet is one user's complete emoji set on a message, with the log_id
+// of the record that set it (§4.7).
+type reactionSet struct {
+	logID  string
+	emojis []string
+}
+
+// membershipRec is one user's membership state in a room, with the log_id of
+// the record that set it (§4.2.2).
+type membershipRec struct {
+	logID  string
+	joined bool
+	user   *protocol.User
 }
 
 // New returns an empty Store.
 func New() *Store {
 	return &Store{
-		rooms:     make(map[string]*Room),
-		notJoined: make(map[string]*Room),
-		users:     make(map[string]*protocol.User),
-		nameUsers: make(map[string]map[string]bool),
-		reactions: make(map[string]map[string][]string),
-		typing:    make(map[string]map[string]time.Time),
-		mutes:     make(map[string]*Mute),
+		rooms:       make(map[string]*Room),
+		notJoined:   make(map[string]*Room),
+		users:       make(map[string]*protocol.User),
+		nameUsers:   make(map[string]map[string]bool),
+		messages:    make(map[string]*protocol.Message),
+		reactions:   make(map[string]map[string]reactionSet),
+		memberships: make(map[string]map[string]*membershipRec),
+		typing:      make(map[string]map[string]time.Time),
+		mutes:       make(map[string]*Mute),
 	}
 }
 
@@ -369,7 +405,8 @@ func mergeExt(kept, update json.RawMessage) json.RawMessage {
 // ApplyMessage installs a message snapshot under the replay rule: keep the
 // record with the greatest log_id, tombstone winning ties. A message without
 // a message_id is a transient notice (§3.5.3): it is buffered for display,
-// never installed as a snapshot.
+// never installed as a snapshot. A reply_to object that carries a log_id is an
+// embedded snapshot (§3.5.4): it installs in its own room like any other.
 func (s *Store) ApplyMessage(m *protocol.Message) {
 	if m == nil {
 		return
@@ -381,28 +418,39 @@ func (s *Store) ApplyMessage(m *protocol.Message) {
 	if m.RoomID == "" {
 		return
 	}
-	// A snapshot that carries prev_room_id is a move (§4.4): the message's
-	// current room is now m.RoomID. Drop any stale copy from the source room so
-	// the message does not appear in both.
-	if m.PrevRoomID != "" && m.PrevRoomID != m.RoomID {
-		s.removeMessageFromRoom(m.PrevRoomID, m.MessageID)
+
+	// Install embedded reply_to snapshots first (§3.5.4). A bare reference
+	// (no log_id) installs nothing.
+	if m.ReplyTo != nil && m.ReplyTo.MessageID != "" && m.ReplyTo.LogID != "" {
+		s.ApplyMessage(m.ReplyTo)
 	}
-	r := s.ensureRoom(m.RoomID)
-	existing, ok := r.Messages[m.MessageID]
-	if ok {
-		if after(existing.LogID, m.LogID) {
+
+	if prev, ok := s.messages[m.MessageID]; ok {
+		if after(prev.LogID, m.LogID) {
 			return // existing snapshot is newer
 		}
-		if existing.LogID == m.LogID && existing.Deleted && !m.Deleted {
+		if prev.LogID == m.LogID && prev.Deleted && !m.Deleted {
 			return // tombstone wins an equal-log_id tie
 		}
 	}
-	r.Messages[m.MessageID] = m
-	if ok {
-		// Updating a known snapshot must not add a second ordering entry:
-		// a duplicate id would render the message twice and stall selection.
-		r.Order = removeOrderID(r.Order, m.MessageID)
+
+	// Re-home the message when its current room changed (§4.4): the winning
+	// snapshot's room_id is where the message is now. Drop any copy from the
+	// room it used to be in, whether the move is seen through the previous
+	// snapshot or announced via prev_room_id.
+	if prev, ok := s.messages[m.MessageID]; ok && prev.RoomID != "" && prev.RoomID != m.RoomID {
+		s.removeMessageFromRoom(prev.RoomID, m.MessageID)
+	} else if m.PrevRoomID != "" && m.PrevRoomID != m.RoomID {
+		s.removeMessageFromRoom(m.PrevRoomID, m.MessageID)
 	}
+
+	s.messages[m.MessageID] = m
+
+	r := s.ensureRoom(m.RoomID)
+	r.Messages[m.MessageID] = m
+	// Updating a known snapshot must not add a second ordering entry: a
+	// duplicate id would render the message twice and stall selection.
+	r.Order = removeOrderID(r.Order, m.MessageID)
 	r.Order = insertOrdered(r.Order, m.MessageID)
 
 	// A new message from a user clears their typing indicator.
@@ -504,24 +552,47 @@ func (s *Store) ApplyStatus(p *protocol.StatusParams) {
 }
 
 // ApplyReactions merges a reactions record: each entry is one user's complete
-// set, replacing any earlier set for that user (§4.7).
+// set on a message, kept under the replay rule (§4.7). The greatest log_id
+// wins per (message_id, user_id); an empty set clears; duplicate emoji in a
+// set collapse. A record without log_id always replaces.
 func (s *Store) ApplyReactions(p *protocol.ReactionsParams) {
 	if p == nil || p.MessageID == "" {
 		return
 	}
 	sets, ok := s.reactions[p.MessageID]
 	if !ok {
-		sets = make(map[string][]string)
+		sets = make(map[string]reactionSet)
 		s.reactions[p.MessageID] = sets
 	}
 	for i := range p.Reactions {
 		e := p.Reactions[i]
-		if len(e.Emojis) == 0 {
-			delete(sets, e.From.UserID)
+		uid := e.From.UserID
+		if uid == "" {
 			continue
 		}
-		sets[e.From.UserID] = append([]string(nil), e.Emojis...)
+		if cur, ok := sets[uid]; ok && p.LogID != "" && cur.logID != "" && !after(p.LogID, cur.logID) {
+			continue // stale set for this user
+		}
+		sets[uid] = reactionSet{logID: p.LogID, emojis: dedupeEmojis(e.Emojis)}
 	}
+}
+
+// dedupeEmojis returns the emojis with duplicates removed, keeping first-seen
+// order (§4.7: duplicate emoji in a set collapse).
+func dedupeEmojis(in []string) []string {
+	if len(in) <= 1 {
+		return append([]string(nil), in...)
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, e := range in {
+		if seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out
 }
 
 // ReactionTotal is one emoji and its count on a message.
@@ -531,15 +602,15 @@ type ReactionTotal struct {
 }
 
 // ReactionTotals returns the summed reaction counts for a message, sorted by
-// emoji.
+// emoji. Each user's set is counted once per distinct emoji.
 func (s *Store) ReactionTotals(messageID string) []ReactionTotal {
 	sets := s.reactions[messageID]
 	if len(sets) == 0 {
 		return nil
 	}
 	counts := make(map[string]int)
-	for _, emojis := range sets {
-		for _, e := range emojis {
+	for _, set := range sets {
+		for _, e := range set.emojis {
 			counts[e]++
 		}
 	}
@@ -553,7 +624,7 @@ func (s *Store) ReactionTotals(messageID string) []ReactionTotal {
 
 // MyReactions returns the current user's emoji set on a message.
 func (s *Store) MyReactions(messageID, userID string) []string {
-	return s.reactions[messageID][userID]
+	return s.reactions[messageID][userID].emojis
 }
 
 // ApplyActivity tracks a typing indicator from an activity notification.
@@ -592,14 +663,9 @@ func (s *Store) TypingUsers(roomID string, now time.Time) []string {
 	return out
 }
 
-// MessageByID finds a message snapshot across all rooms by its message_id.
+// MessageByID finds the winning message snapshot by its message_id.
 func (s *Store) MessageByID(messageID string) *protocol.Message {
-	for _, r := range s.rooms {
-		if m, ok := r.Messages[messageID]; ok {
-			return m
-		}
-	}
-	return nil
+	return s.messages[messageID]
 }
 
 // ApplyRoomList installs a room_list result.
@@ -825,14 +891,18 @@ func (s *Store) applyJoinedRoom(rec *protocol.Room) {
 	}
 	r := s.ensureRoom(rec.RoomID)
 	r.applyRecord(rec)
-	r.replaceMembers(rec.Members)
+	if rec.Members != nil {
+		r.replaceMembers(rec.Members, rec.LatestLogID)
+		s.refreshMembers(r)
+	}
 }
 
 func (s *Store) applyUpdatedRoom(rec *protocol.Room) {
 	r := s.ensureRoom(rec.RoomID)
 	r.applyRecord(rec)
 	if rec.Members != nil {
-		r.replaceMembers(rec.Members)
+		r.replaceMembers(rec.Members, rec.LatestLogID)
+		s.refreshMembers(r)
 	}
 }
 
@@ -850,7 +920,8 @@ func (s *Store) applyNotJoinedRoom(rec *protocol.Room) {
 	}
 	r.applyRecord(rec)
 	if rec.Members != nil {
-		r.replaceMembers(rec.Members)
+		r.replaceMembers(rec.Members, rec.LatestLogID)
+		s.refreshMembers(r)
 	}
 }
 
@@ -868,22 +939,73 @@ func (s *Store) removeRoom(id string) {
 }
 
 func (s *Store) applyMembership(m *protocol.Membership) {
-	if m == nil {
+	if m == nil || m.RoomID == "" {
 		return
 	}
-	r := s.ensureRoom(m.RoomID)
+	recs, ok := s.memberships[m.RoomID]
+	if !ok {
+		recs = make(map[string]*membershipRec)
+		s.memberships[m.RoomID] = recs
+	}
 	for i := range m.Members {
 		e := m.Members[i]
-		if e.Joined {
-			cp := e.User
-			r.Members[e.User.UserID] = &cp
+		uid := e.User.UserID
+		if uid == "" {
+			continue
+		}
+		if cur, ok := recs[uid]; ok && m.LogID != "" && cur.logID != "" && !after(m.LogID, cur.logID) {
+			continue // stale membership for this user
+		}
+		u := e.User
+		recs[uid] = &membershipRec{logID: m.LogID, joined: e.Joined, user: &u}
+	}
+	r := s.ensureRoom(m.RoomID)
+	s.refreshMembers(r)
+}
+
+// computeMembers projects a room's member list: the complete base list as of
+// memberPos, overlaid with memberships above that position (§4.2.1).
+func (s *Store) computeMembers(r *Room) map[string]*protocol.User {
+	out := make(map[string]*protocol.User, len(r.baseMembers))
+	for id, u := range r.baseMembers {
+		out[id] = u
+	}
+	for id, rec := range s.memberships[r.Record.RoomID] {
+		if r.memberPos != "" && !after(rec.logID, r.memberPos) {
+			continue // already in the base list
+		}
+		if rec.joined {
+			out[id] = rec.user
 		} else {
-			delete(r.Members, e.User.UserID)
+			delete(out, id)
 		}
 	}
+	return out
+}
+
+// refreshMembers recomputes the room's projected member list (Room.Members)
+// from its base list and winning memberships.
+func (s *Store) refreshMembers(r *Room) {
+	r.Members = s.computeMembers(r)
 }
 
 func (r *Room) applyRecord(rec *protocol.Room) {
+	if rec == nil || rec.RoomID == "" {
+		return
+	}
+	// Delivery fields are not part of the logged record; a room record frame
+	// updates them regardless of the replay gate.
+	if rec.LatestLogID != "" {
+		r.LatestLogID = rec.LatestLogID
+	}
+	if rec.HistoryLogID != nil {
+		r.HistoryLogID = rec.HistoryLogID
+	}
+	// Replay (§2.3): keep the record with the greatest log_id. A record
+	// without log_id (a server without capability history) always replaces.
+	if rec.LogID != "" && r.Record.LogID != "" && !after(rec.LogID, r.Record.LogID) {
+		return
+	}
 	r.Record.RoomID = rec.RoomID
 	r.Record.LogID = rec.LogID
 	r.Record.PrevLogID = rec.PrevLogID
@@ -892,28 +1014,17 @@ func (r *Room) applyRecord(rec *protocol.Room) {
 	r.Record.Title = rec.Title
 	r.Record.Description = rec.Description
 	r.Record.Ext = rec.Ext
-
-	if rec.LatestLogID != "" {
-		r.Record.LatestLogID = rec.LatestLogID
-		r.LatestLogID = rec.LatestLogID
-	}
-	if rec.HistoryLogID != nil {
-		r.Record.HistoryLogID = rec.HistoryLogID
-		r.HistoryLogID = rec.HistoryLogID
-	}
-	if rec.MemberCount != 0 {
-		r.Record.MemberCount = rec.MemberCount
-	}
 }
 
-func (r *Room) replaceMembers(members []protocol.User) {
+func (r *Room) replaceMembers(members []protocol.User, pos string) {
 	nm := make(map[string]*protocol.User, len(members))
 	for i := range members {
 		u := members[i]
 		nm[u.UserID] = &u
 	}
-	r.Members = nm
-	r.Record.Members = members
+	r.baseMembers = nm
+	r.memberPos = pos
+	r.membersKnown = true
 }
 
 // Title returns the display title, falling back to room_id.
@@ -992,6 +1103,7 @@ func (s *Store) ResetRoomContent(roomID string) {
 	}
 	for _, mid := range r.Order {
 		delete(s.reactions, mid)
+		delete(s.messages, mid)
 	}
 	r.ResetContent()
 }

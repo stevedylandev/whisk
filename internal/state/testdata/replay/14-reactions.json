@@ -1,0 +1,51 @@
+{
+  "format": 4,
+  "kind": "replay",
+  "name": "Reaction sets replay per (message_id, user_id)",
+  "description": "Each element replaces one user's set on one message; duplicates collapse, [] clears, stale sets are ignored, reactions for a message not yet loaded are kept until it arrives, and compacted records carry several users under the greatest folded log_id.",
+  "references": [
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#43-history",
+    "PROTOCOL.md#47-reactions"
+  ],
+  "variants": [
+    {
+      "name": "live",
+      "steps": [
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"}}}},
+        {"receive":{"method":"reactions","params":{"log_id":"110","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"111","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍","🎉","👍"]}]}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"},"reactions":[{"emoji":"🎉","user_ids":["carol"]},{"emoji":"👍","user_ids":["bob","carol"]}]}]}]}},
+        {"receive":{"method":"reactions","params":{"log_id":"112","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👀"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"113","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":[]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"111","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍","🎉","👍"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"114","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👍"]}]}}},
+        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"},"reactions":[{"emoji":"👀","user_ids":["bob"]}]}]}]}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"done"}}}}
+      ]
+    },
+    {
+      "name": "reactions-before-messages",
+      "steps": [
+        {"receive":{"method":"reactions","params":{"log_id":"114","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"113","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":[]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"110","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"112","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👀"]}]}}},
+        {"receive":{"method":"reactions","params":{"log_id":"111","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍","🎉","👍"]}]}}},
+        {"expect":{"rooms":[]}},
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"}},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"done"}}],"first_log_id":"100","last_log_id":"101","more":true,"latest_log_id":"114","history_log_id":"100"}}}
+      ]
+    },
+    {
+      "name": "compacted-history",
+      "steps": [
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"}},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"done"}}],"reactions":[{"log_id":"113","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👀"]},{"from":{"user_id":"carol"},"emojis":[]}]},{"log_id":"114","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👍"]}]}],"first_log_id":"100","last_log_id":"114","more":false,"latest_log_id":"114","history_log_id":"100"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"ship it?"},"reactions":[{"emoji":"👀","user_ids":["bob"]}]},{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"done"},"reactions":[{"emoji":"👍","user_ids":["alice"]}]}]}
+    ]
+  }
+}
