@@ -374,9 +374,10 @@ func trimLastEmojiRune(s string) string {
 }
 
 // reactTo adds emoji to, or removes it from, the user's reactions on one
-// message. A reactions request carries the complete set (§4.7).
+// message. A reactions request carries the complete set (§4.7), and changes
+// count as posting: a user who may only read (ext:permissions) cannot react.
 func (m *Model) reactTo(messageID, emoji string) tea.Cmd {
-	if !m.requireCap("reactions") {
+	if !m.requireCap("reactions") || !m.requireWrite() {
 		return nil
 	}
 	store := m.cur().store

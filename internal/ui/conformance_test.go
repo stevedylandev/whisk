@@ -646,7 +646,9 @@ func TestCatchUpOneStream(t *testing.T) {
 	}
 
 	// The log bound passed the stream's start: per-room recovery takes
-	// over, without restarting the stream.
+	// over, without restarting the stream. Only one history request may be
+	// in flight: room a's page goes out first; room b's waits in the queue
+	// until the slot is free again.
 	s.store.Room("a").LatestLogID = "180"
 	s.store.Room("b").LatestLogID = "180"
 	m.catchUpRooms(s)
@@ -656,14 +658,17 @@ func TestCatchUpOneStream(t *testing.T) {
 	if s.logCatchUp != nil || s.logUnsupported {
 		t.Fatal("bound past start should abandon the stream, not the query")
 	}
-	n := 0
-	if cmd != nil {
-		if b, ok := cmd().(tea.BatchMsg); ok {
-			n = len(b)
-		}
+	first, ok := cmd().(requestDoneMsg)
+	if !ok || first.tag != "history_forward" || first.roomID != "a" {
+		t.Fatalf("room a's page should go out first, got %v", cmd())
 	}
-	if n != 2 {
-		t.Fatalf("want two per-room recoveries, got %d", n)
+	// A reply for a frees the connection's one history slot, and the
+	// queued page for b goes out.
+	next := m.handleRequestDone(s, requestDoneMsg{sid: s.id, tag: "history_forward", roomID: "a",
+		result: mustJSON(t, protocol.HistoryResult{LatestLogID: "180", HistoryLogID: strPtr("170")})})
+	second, ok := next().(requestDoneMsg)
+	if !ok || second.tag != "history_forward" || second.roomID != "b" {
+		t.Fatalf("room b's queued page should follow a's, got %v", next())
 	}
 	for _, id := range []string{"a", "b"} {
 		r := s.store.Room(id)

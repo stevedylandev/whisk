@@ -90,7 +90,7 @@ func TestReadUploadFileCompressesLargeImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	up, err := readUploadFile(path)
+	up, err := readUploadFile(path, nil, mediaUpload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestReadUploadFileLeavesSmallImage(t *testing.T) {
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	up, err := readUploadFile(path)
+	up, err := readUploadFile(path, nil, mediaUpload)
 	if err != nil {
 		t.Fatal(err)
 	}

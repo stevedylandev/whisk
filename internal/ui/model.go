@@ -350,6 +350,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.handleRequestDone(s, msg))
 		}
 
+	case historyRetryMsg:
+		if s := m.session(msg.sid); s != nil {
+			// The read rate limit's wait is over: re-queue the page and
+			// send it when the connection is free.
+			s.histQueue = append([]historyJob{msg.job}, s.histQueue...)
+			cmds = append(cmds, m.popHistory(s))
+		}
+
 	case serverHelpTimeoutMsg:
 		if s := m.session(msg.sid); s != nil {
 			m.onServerHelpTimeout(s, msg.gen)

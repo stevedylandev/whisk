@@ -9,6 +9,7 @@ import (
 
 	"github.com/stevedylandev/whisk/internal/client"
 	"github.com/stevedylandev/whisk/internal/config"
+	"github.com/stevedylandev/whisk/internal/protocol"
 	"github.com/stevedylandev/whisk/internal/state"
 )
 
@@ -43,15 +44,22 @@ type session struct {
 	// noReconnect is set by a denied error (§1.1): the client waits for the
 	// user to act instead of reconnecting automatically.
 	noReconnect bool
-	// retryAfter is the delay an unsolicited retry_after error asked for
-	// (§1.1); it applies to the next reconnect attempt once.
+	// retryAfter is the delay an unsolicited retry_after error or a failed
+	// handshake's Retry-After asked for (§1.1); it applies to the next
+	// reconnect attempt once, and never shortens the backoff below it.
 	retryAfter time.Duration
+	// connectedAt is when the current connection came up: the reconnect
+	// backoff resets only once a connection has stayed up for a while.
+	connectedAt time.Time
 	// lastAuthScheme is the scheme of the auth request in flight, so a
 	// denied reply can drop a stale saved token (§3.2.1).
 	lastAuthScheme string
 
 	// idleSent records that this connection reported idle (§4.5.3).
 	idleSent bool
+	// lastReadSent is when this connection last sent a read cursor, for the
+	// local throttle that keeps frames under the connection's cap.
+	lastReadSent time.Time
 
 	// unread counts live messages that arrived in rooms other than the open
 	// one, by room_id; it clears when the room is opened.
@@ -82,6 +90,18 @@ type session struct {
 	// logTo is the before bound of the room-less forward stream in flight
 	// ("" for unbounded).
 	logTo string
+
+	// histQueue and histBusy serialize history requests: at most one is in
+	// flight per connection ("History request already in progress"). A
+	// queued job carries what was asked for, to re-issue after a read rate
+	// limit's delay.
+	histQueue    []historyJob
+	histBusy     bool
+	histInFlight historyJob
+
+	// writeRetries counts, by request id, how many times a mutation was
+	// resent through a posting burst limit; at most writeRetryMax per id.
+	writeRetries map[string]int
 }
 
 func newSession(id int, cfg config.Server, saved bool) *session {
@@ -104,6 +124,14 @@ func serverLabel(raw string) string {
 
 func (s *session) hasCap(name string) bool {
 	return s.store.Server != nil && s.store.Server.HasCapability(name)
+}
+
+// canWrite reports whether the user may post, react, and join rooms here.
+// A server carrying you.ext.permissions with "write": false - a read-only
+// guest - makes whisk refuse writes locally instead of spending a request
+// the server would deny. Absent rules mean allowed.
+func (s *session) canWrite() bool {
+	return protocol.CanWrite(s.store.You)
 }
 
 // selfName returns the authenticated user's display name on this server, or

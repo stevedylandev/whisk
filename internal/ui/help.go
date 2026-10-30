@@ -109,10 +109,11 @@ const serverHelpGrace = 3 * time.Second
 type serverHelpTimeoutMsg struct{ sid, gen int }
 
 // fetchServerHelp sends /help to the current server unless it already has an
-// answer or one in flight.
+// answer or one in flight. A read-only user cannot run commands (§3.2 guest
+// read-only), so the local help has to do there.
 func (m *Model) fetchServerHelp() tea.Cmd {
 	s := m.cur()
-	if !m.hasCap("command") || s.client == nil || s.serverHelp.state != helpIdle {
+	if !m.hasCap("command") || !s.canWrite() || s.client == nil || s.serverHelp.state != helpIdle {
 		return nil
 	}
 	s.serverHelp = serverHelp{state: helpPending, room: m.chat.roomID, gen: s.serverHelp.gen + 1}

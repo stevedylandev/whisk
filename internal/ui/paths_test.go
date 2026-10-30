@@ -179,7 +179,7 @@ func TestReadUploadFileExpandsTilde(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	up, err := readUploadFile("~/note.txt")
+	up, err := readUploadFile("~/note.txt", nil, mediaUpload)
 	if err != nil {
 		t.Fatal(err)
 	}

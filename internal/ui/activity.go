@@ -11,11 +11,21 @@ import (
 // Activity and idle reporting: typing indicators and read cursors (§4.6),
 // and the idle/attended status a connection reports (§4.5.3).
 
+// Window and activity throttles (the limits doc's "Typing, status and push"
+// table plus the frame cap): typing updates are relayed at most 10 a minute
+// per account, and every frame counts against the connection's 60-a-minute
+// frame cap, so whisk types at most every six seconds and reads rooms at
+// most every five.
+const (
+	typingEvery = 6 * time.Second
+	readEvery   = 5 * time.Second
+)
+
 func (m *Model) maybeSendTyping() []tea.Cmd {
 	if !m.hasCap("activity") || m.chat.roomID == "" || m.composerText() == "" {
 		return nil
 	}
-	if time.Since(m.chat.lastTypingSent) < 3*time.Second {
+	if time.Since(m.chat.lastTypingSent) < typingEvery {
 		return nil
 	}
 	m.chat.lastTypingSent = time.Now()
@@ -40,7 +50,14 @@ func (m *Model) maybeSendRead() tea.Cmd {
 	if last == m.chat.lastReadID {
 		return nil
 	}
+	// A read cursor is a frame like any other: at most one every five
+	// seconds, however busy the room is. Until one goes out, lastReadID
+	// stays behind, so the next trigger retries it.
+	if time.Since(s.lastReadSent) < readEvery {
+		return nil
+	}
 	m.chat.lastReadID = last
+	s.lastReadSent = time.Now()
 	return notifyCmd(s, "activity", protocol.ActivityParams{
 		RoomID:        m.chat.roomID,
 		ReadMessageID: last,

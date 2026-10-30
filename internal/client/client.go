@@ -10,8 +10,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +50,11 @@ type Client struct {
 	errMu    sync.Mutex
 	err      error
 
+	// lastRecvMu guards lastRecv, the time of the last frame of any kind
+	// received, for the ping watchdog.
+	lastRecvMu sync.Mutex
+	lastRecv   time.Time
+
 	pingMu     sync.Mutex
 	pingCancel context.CancelFunc
 }
@@ -57,16 +65,25 @@ type Client struct {
 // A server that serves its web client at the root and the socket at /ws (the
 // web client's convention) answers a root dial with a plain HTTP page; Dial
 // then retries at /ws, so the address people open in a browser also works.
+//
+// A server that refuses the upgrade with an HTTP error status (429, 503, 403,
+// 400 - the limits doc's "connecting" table) returns an *HTTPError carrying
+// the response's message and Retry-After, over the opaque dial error.
 func Dial(ctx context.Context, url string) (*Client, error) {
 	conn, resp, err := dialWS(ctx, url)
 	if err != nil && isPlainHTTP(resp) {
 		if alt, ok := wsFallbackURL(url); ok {
 			if c2, _, err2 := dialWS(ctx, alt); err2 == nil {
 				conn, err, url = c2, nil, alt
+			} else {
+				resp, _ = alt2(ctx, alt) // keep the alt's answer, if any, for the error
 			}
 		}
 	}
 	if err != nil {
+		if h := newHTTPError(resp); h != nil {
+			return nil, h
+		}
 		return nil, err
 	}
 	c := &Client{
@@ -76,8 +93,72 @@ func Dial(ctx context.Context, url string) (*Client, error) {
 		events:  make(chan Event, 256),
 		done:    make(chan struct{}),
 	}
+	c.markRecv()
 	go c.readLoop()
 	return c, nil
+}
+
+// alt2 dials alt and returns the handshake response even on failure.
+func alt2(ctx context.Context, alt string) (*http.Response, error) {
+	_, resp, err := dialWS(ctx, alt)
+	return resp, err
+}
+
+// HTTPError is a failed WebSocket handshake answered with an HTTP error
+// status (429, 503, 403, 400) instead of the upgrade: a limit or condition
+// refused before any socket existed. RetryAfter is the Retry-After header of
+// a temporary refusal.
+type HTTPError struct {
+	Status     int
+	StatusText string
+	Message    string        // the body's {"error": "…"}
+	RetryAfter time.Duration // 0 when the answer carried none
+}
+
+func (e *HTTPError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.StatusText != "" {
+		return "connection refused: " + e.StatusText
+	}
+	return "connection refused"
+}
+
+// IsTemporary reports whether the answer suggested trying again: a 429 or
+// 503, possibly with a Retry-After.
+func (e *HTTPError) IsTemporary() bool {
+	return e.Status == http.StatusTooManyRequests || e.Status == http.StatusServiceUnavailable
+}
+
+// newHTTPError turns a failed handshake's response, when it is an HTTP error
+// the server answered (rather than a network failure), into an *HTTPError.
+func newHTTPError(resp *http.Response) *HTTPError {
+	if resp == nil || resp.StatusCode < 400 {
+		return nil
+	}
+	e := &HTTPError{
+		Status:     resp.StatusCode,
+		StatusText: http.StatusText(resp.StatusCode),
+	}
+	if resp.Header.Get("Retry-After") != "" {
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+			e.RetryAfter = time.Duration(secs) * time.Second
+		}
+	}
+	// The body is {"error": "<message>"}; the dialer keeps only its first
+	// kilobyte, which the body stays within.
+	if resp.Body != nil {
+		if b, err := io.ReadAll(io.LimitReader(resp.Body, 1024)); err == nil {
+			var body struct {
+				Error string `json:"error"`
+			}
+			if json.Unmarshal(b, &body) == nil {
+				e.Message = body.Error
+			}
+		}
+	}
+	return e
 }
 
 func dialWS(ctx context.Context, url string) (*websocket.Conn, *http.Response, error) {
@@ -116,16 +197,87 @@ func (c *Client) Err() error {
 	return c.err
 }
 
+// CloseCode returns the WebSocket status code the peer closed with, or -1
+// when the connection ended otherwise. The limits doc's closed-connections
+// table tells what each code means.
+func (c *Client) CloseCode() int {
+	var ci CloseInfo
+	if !AsClose(c.Err(), &ci) {
+		return -1
+	}
+	return ci.Code
+}
+
+// CloseReason returns the reason the peer gave for a clean close, if any.
+func (c *Client) CloseReason() string {
+	var ci CloseInfo
+	if !AsClose(c.Err(), &ci) {
+		return ""
+	}
+	return ci.Reason
+}
+
+// markRecv records a frame arriving, for the ping watchdog: a peer answered,
+// so the connection is alive.
+func (c *Client) markRecv() {
+	c.lastRecvMu.Lock()
+	c.lastRecv = time.Now()
+	c.lastRecvMu.Unlock()
+}
+
+// silentFor reports how long the connection has received no frame of any
+// kind.
+func (c *Client) silentFor() time.Duration {
+	c.lastRecvMu.Lock()
+	defer c.lastRecvMu.Unlock()
+	return time.Since(c.lastRecv)
+}
+
 // Request sends a request and blocks until its reply arrives, ctx is done, or
 // the connection drops. It returns the result payload, a protocol error reply,
 // or a transport error.
 func (c *Client) Request(ctx context.Context, method string, params any) (json.RawMessage, *protocol.Error, error) {
 	id := protocol.NewID()
+	if err := protocol.CheckID(id); err != nil {
+		return nil, nil, err
+	}
 	data, err := protocol.MarshalRequest(method, id, params)
 	if err != nil {
 		return nil, nil, err
 	}
+	return c.sendRequest(ctx, data, id)
+}
 
+// RequestWithID sends a request with an explicit id and blocks until its reply
+// arrives, ctx is done, or the connection drops. Retrying a mutation through
+// a burst limit must reuse the same id, so the server deduplicates and never
+// posts twice. It returns the result payload, a protocol error reply, or a
+// transport error.
+func (c *Client) RequestWithID(ctx context.Context, method, id string, params any) (json.RawMessage, *protocol.Error, error) {
+	if err := protocol.CheckID(id); err != nil {
+		return nil, nil, err
+	}
+	data, err := protocol.MarshalRequest(method, id, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.sendRequest(ctx, data, id)
+}
+
+// RequestRaw is RequestWithID with the params already marshaled, so a retry
+// can send the exact frame again.
+func (c *Client) RequestRaw(ctx context.Context, method, id string, rawParams []byte) (json.RawMessage, *protocol.Error, error) {
+	if err := protocol.CheckID(id); err != nil {
+		return nil, nil, err
+	}
+	data, err := protocol.MarshalRequest(method, id, rawParams)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.sendRequest(ctx, data, id)
+}
+
+func (c *Client) sendRequest(ctx context.Context, data []byte, id string) (json.RawMessage, *protocol.Error, error) {
 	ch := make(chan protocol.Response, 1)
 	c.pendingMu.Lock()
 	if c.pending == nil {
@@ -139,6 +291,13 @@ func (c *Client) Request(ctx context.Context, method string, params any) (json.R
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
 	}()
+
+	// The server closes a connection with more frames sent and not yet
+	// processed ("Too many pending frames"); a request that cannot even be
+	// written is no better, so an oversized one is refused here.
+	if err := protocol.CheckFrame(data); err != nil {
+		return nil, nil, err
+	}
 
 	if err := c.write(ctx, data); err != nil {
 		return nil, nil, err
@@ -157,10 +316,14 @@ func (c *Client) Request(ctx context.Context, method string, params any) (json.R
 	}
 }
 
-// Notify sends a one-way notification (a frame with no id).
+// Notify sends a one-way notification (a frame with no id). An oversized one
+// is refused here rather than sent, which would close the connection (1009).
 func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	data, err := protocol.MarshalNotification(method, params)
 	if err != nil {
+		return err
+	}
+	if err := protocol.CheckFrame(data); err != nil {
 		return err
 	}
 	return c.write(ctx, data)
@@ -171,8 +334,15 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.Notify(ctx, "ping", nil)
 }
 
-// StartPing begins sending ping notifications every interval. Calling it again
+// StartPing begins sending the server-advertised keepalive at interval: the
+// exact text {"method":"ping"}, which the runtime answers without waking the
+// server and without counting against any frame limit. Calling it again
 // replaces the previous interval. A non-positive interval stops the pinger.
+//
+// The interval is also the liveness watch: when a connection has received no
+// frame of any kind for about two intervals, the connection is presumed dead
+// (its peer vanished without a close frame - sleep, a network change) and is
+// closed here, so pending requests fail and the caller reconnects.
 func (c *Client) StartPing(interval time.Duration) {
 	c.pingMu.Lock()
 	defer c.pingMu.Unlock()
@@ -192,6 +362,13 @@ func (c *Client) StartPing(interval time.Duration) {
 			case <-c.done:
 				return
 			case <-t.C:
+				// About two intervals without a pong or any other frame is
+				// the checklist's rule for a dead connection.
+				if silence := c.silentFor(); silence > 2*interval {
+					c.setErr(fmt.Errorf("no frame for %v; connection presumed dead", silence.Round(time.Second)))
+					_ = c.conn.CloseNow()
+					return
+				}
 				pctx, pcancel := context.WithTimeout(ctx, interval/2)
 				_ = c.Ping(pctx)
 				pcancel()
@@ -239,8 +416,23 @@ func (c *Client) readLoop() {
 	for {
 		_, data, err := c.conn.Read(context.Background())
 		if err != nil {
-			c.setErr(err)
+			var ce websocket.CloseError
+			if errors.As(err, &ce) {
+				d := &disconnectedError{
+					cause: err,
+					CloseInfo: CloseInfo{
+						Code:   int(ce.Code),
+						Reason: ce.Reason,
+					},
+				}
+				c.setErr(d)
+			} else {
+				c.setErr(err)
+			}
 			return
+		}
+		if len(data) > 0 {
+			c.markRecv()
 		}
 		c.dispatch(data)
 	}

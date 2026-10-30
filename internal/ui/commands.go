@@ -44,6 +44,9 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			m.setStatus("usage: /nick NAME", true)
 			return nil
 		}
+		if !m.requireWrite() {
+			return nil
+		}
 		return requestCmd(m.cur(), "me", "me", protocol.MeParams{Name: protocol.StringPtr(name)})
 	case "status":
 		return m.statusCommand(args)
@@ -54,7 +57,7 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			m.setStatus("usage: /join ROOM_ID", true)
 			return nil
 		}
-		if !m.requireCap("rooms") {
+		if !m.requireCap("rooms") || !m.requireWrite() {
 			return nil
 		}
 		return m.joinRoom(m.cur(), m.resolveRoom(args[0]))
@@ -65,6 +68,9 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 		}
 		if roomID == "" {
 			m.setStatus("no room to leave", true)
+			return nil
+		}
+		if !m.requireWrite() {
 			return nil
 		}
 		return requestCmd(m.cur(), "room_leave", "room_leave", map[string]string{"room_id": roomID})
@@ -79,7 +85,7 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			m.setStatus("usage: /new [--private] TITLE", true)
 			return nil
 		}
-		if !m.requireCap("rooms") {
+		if !m.requireCap("rooms") || !m.requireWrite() {
 			return nil
 		}
 		m.cur().expectPrivate = private
@@ -90,7 +96,7 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			m.setStatus("usage: /thread TITLE", true)
 			return nil
 		}
-		if !m.requireCap("rooms") {
+		if !m.requireCap("rooms") || !m.requireWrite() {
 			return nil
 		}
 		if m.chat.roomID == "" {
@@ -106,7 +112,7 @@ func (m *Model) dispatchCommand(text, replyTo string) tea.Cmd {
 			m.setStatus("usage: /move ROOM", true)
 			return nil
 		}
-		if !m.requireCap("edit") {
+		if !m.requireCap("edit") || !m.requireWrite() {
 			return nil
 		}
 		msg := m.selectedMessage()
@@ -262,13 +268,21 @@ func (m *Model) avatarCommand(args []string) tea.Cmd {
 	// /avatar with no path clears the avatar (§3.3.2); a path goes through
 	// the /avatar command with an upload embed (§4.8.6).
 	if len(args) == 0 {
+		if !m.requireWrite() {
+			return nil
+		}
 		return requestCmd(m.cur(), "me", "me", protocol.MeParams{Avatar: protocol.StringPtr("")})
 	}
 	if !m.hasCap("command") || !m.hasCap("embed:upload") {
 		m.setStatus("server lacks command/embed:upload (needed for /avatar)", true)
 		return nil
 	}
-	up, err := readUploadFile(args[0])
+	if !m.requireWrite() {
+		return nil
+	}
+	// An avatar image is checked against ext.media's avatar table, whose
+	// caps are far below attachments' (the demo: 256 KiB vs 5 MiB).
+	up, err := readUploadFile(args[0], protocol.ServerMedia(m.cur().store.Server), mediaAvatar)
 	if err != nil {
 		m.setStatus(err.Error(), true)
 		return nil

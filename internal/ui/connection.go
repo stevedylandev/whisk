@@ -2,7 +2,10 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand/v2"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,7 +28,7 @@ func (m *Model) onConnected(s *session, c *client.Client) []tea.Cmd {
 	s.client = c
 	s.connecting = false
 	s.reconnecting = false
-	s.reconnectAttempts = 0
+	s.connectedAt = time.Now()
 	// Commands can depend on who signs in, so a new connection asks again.
 	s.serverHelp = serverHelp{gen: s.serverHelp.gen + 1}
 	if m.isAuthTarget(s) {
@@ -40,36 +43,46 @@ func (m *Model) onConnected(s *session, c *client.Client) []tea.Cmd {
 
 func (m *Model) onConnectErr(s *session, err error) []tea.Cmd {
 	s.connecting = false
+	var temp *client.HTTPError
+	if !errors.As(err, &temp) {
+		temp = nil
+	}
 	if m.isAuthTarget(s) && !s.reconnecting {
 		m.auth.connecting = false
 		m.auth.errMsg = fmt.Sprintf("connection failed: %v", err)
 		m.setStatus("connection failed", true)
+		if temp != nil && temp.RetryAfter > 0 {
+			s.retryAfter = temp.RetryAfter
+		}
 		return nil
 	}
-	// A background server keeps retrying with backoff.
-	s.reconnectAttempts++
-	if s.reconnectAttempts > 6 {
-		s.reconnecting = false
-		m.sessStatus(s, fmt.Sprintf("reconnect failed: %v (press r to retry)", err), true)
-		return nil
+	// A temporary refusal carries a Retry-After (the limits doc's
+	// "connecting" table) that is never waited less than.
+	if temp != nil && temp.RetryAfter > s.retryAfter {
+		s.retryAfter = temp.RetryAfter
 	}
-	s.reconnecting = true
-	delay := time.Duration(1<<uint(s.reconnectAttempts)) * time.Second
-	if delay > 30*time.Second {
-		delay = 30 * time.Second
-	}
+	// A background server keeps retrying with compliant backoff.
+	delay := m.backoff(s)
 	m.sessStatus(s, fmt.Sprintf("connection failed: %v (retrying in %s)", err, delay.Round(time.Second)), true)
 	s.connecting = true
 	return []tea.Cmd{connectCmd(s.id, s.cfg.URL, delay)}
 }
 
+// onDisconnect reconnects after a broken connection, honouring the limits
+// doc's closed-connections table: exponential backoff with jitter, minutes
+// after a server-rate close, and none at all when the server replaced the
+// credentials.
 func (m *Model) onDisconnect(s *session, err error) []tea.Cmd {
 	if m.quit {
 		return nil
 	}
-	// Keep the store (records survive reconnects, §2.3); drop only the
-	// transient state of the connection.
+	// The store keeps its records across reconnects (§2.3); only the
+	// transient state of the connection is dropped. The history queue
+	// belongs to the lost connection, as do its loading flags.
 	s.store.ResetTransient()
+	s.histQueue = nil
+	s.histBusy = false
+	s.histInFlight = historyJob{}
 	s.logCatchUp = nil
 	s.logTo = ""
 	s.closeClient()
@@ -87,6 +100,21 @@ func (m *Model) onDisconnect(s *session, err error) []tea.Cmd {
 		}
 		return nil
 	}
+
+	// A close with an explicit policy message decides between a plain
+	// backoff, a longer wait, and waiting for the user.
+	policyDelay, waitUser, note := classifyClose(err)
+	if waitUser {
+		s.noReconnect = true
+		s.reconnecting = false
+		s.retryAfter = 0
+		m.sessStatus(s, note, true)
+		return nil
+	}
+	if policyDelay > s.retryAfter {
+		s.retryAfter = policyDelay
+	}
+
 	if s.noReconnect {
 		// A denied error (§1.1): wait for the user to act.
 		s.reconnecting = false
@@ -99,16 +127,138 @@ func (m *Model) onDisconnect(s *session, err error) []tea.Cmd {
 		return nil
 	}
 	s.reconnecting = true
-	s.reconnectAttempts = 0
-	// An unsolicited retry_after (§1.1) sets the wait for the next attempt.
-	delay := time.Second
-	if s.retryAfter > 0 {
-		delay = s.retryAfter
-		s.retryAfter = 0
-	}
+	// The next attempt waits at least what a rate refusal asked for, and
+	// otherwise climbs the backoff (see backoff, which consumes it via the
+	// attempts counter only up to the refusal's wait).
+	delay := m.backoff(s)
 	m.sessStatus(s, fmt.Sprintf("disconnected: %v — reconnecting in %s…", errMessage(err), delay.Round(time.Second)), true)
 	s.connecting = true
 	return []tea.Cmd{connectCmd(s.id, s.cfg.URL, delay)}
+}
+
+// backoffDelay is the reconnect delay of attempt n: 1 s doubling to at most
+// backoffMax, each scaled ±50% jitter as the limits doc's checklist suggests.
+func backoffDelay(n int) time.Duration {
+	if n < 0 {
+		n = 0
+	}
+	delay := time.Duration(1<<uint(n)) * time.Second
+	if delay > backoffMax {
+		delay = backoffMax
+	}
+	// Full-second jitter within ±50%: half as long at least, half again at
+	// most.
+	delay = time.Duration(float64(delay) * (0.5 + rand.Float64()))
+	if delay < time.Second {
+		delay = time.Second
+	}
+	return delay
+}
+
+// backoffMax is the reconnect backoff's ceiling.
+const backoffMax = 60 * time.Second
+
+// stableAfter is how long a connection must stay up before the backoff
+// resets: about three ping intervals, so a server that cuts every burst
+// cannot reset the climb by letting one attempt through.
+const stableAfter = 90 * time.Second
+
+// backoff reports the session's next reconnect delay, consuming any retry
+// refusal the server asked for, and resetting the climb only after a
+// connection that stayed up.
+func (m *Model) backoff(s *session) time.Duration {
+	delay := s.retryAfter
+	s.retryAfter = 0
+	if delay > 0 && s.reconnectAttempts == 0 {
+		// A fresh refusal on a not-yet-climbing backoff: wait exactly what
+		// the server asked for, once.
+		return delay
+	}
+	if time.Since(s.connectedAt) >= stableAfter {
+		// The connection had stayed up: start the climb over.
+		s.reconnectAttempts = 0
+	}
+	delay2 := backoffDelay(s.reconnectAttempts)
+	s.reconnectAttempts++
+	if delay2 > delay {
+		return delay2
+	}
+	return delay
+}
+
+// closeState classifies a broken connection per the limits doc's
+// closed-connections table:
+//
+//   - A credential close ("Device token replaced…", "Removed by an admin…",
+//     "Signed out…") must not reconnect automatically; the user is asked.
+//   - An address frame-rate or budget close (1013) is waited out in minutes,
+//     not seconds.
+//   - Any other close climbs the usual backoff.
+//
+// The returned delay is a minimum for the next attempt when positive, and 0
+// for the ordinary climb; a code that demands a user makes waitUser true.
+func classifyClose(err error) (delay time.Duration, waitUser bool, note string) {
+	if err == nil {
+		return 0, false, ""
+	}
+	// The client records a clean peer close's status code and reason.
+	var ce client.CloseInfo
+	var code int
+	var reason string
+	if client.AsClose(err, &ce) {
+		code, reason = ce.Code, ce.Reason
+	}
+	switch code {
+	case 0: // network or transport failure, no close frame
+		return 0, false, ""
+	case 1001:
+		// "Connection idle; reconnect to recover" (the stale sweep): an
+		// ordinary disconnect; whisk pings, so a live tab reopens well
+		// before its own socket turns stale.
+		return 0, false, ""
+	case 1008:
+		reason = strings.ToLower(reason)
+		switch {
+		case strings.Contains(reason, "replaced"),
+			strings.Contains(reason, "removed"),
+			strings.Contains(reason, "signed out"):
+			// Credentials were revoked or rotated: reconnecting with them
+			// in a loop would spend authentication attempts for nothing.
+			return 0, true, "connection closed by the server: " + reason
+		case strings.Contains(reason, "Authentication timed out"):
+			// whisk authenticates right after the server frame; reaching
+			// the timeout means the network stalled: an ordinary retry.
+			return 0, false, ""
+		case strings.Contains(reason, "Frame rate limit"),
+			strings.Contains(reason, "Too many pending frames"):
+			// This connection went over its frame or pending-frames rate:
+			// a quiet minute at least, per the table (the frame bucket
+			// refills over a minute).
+			return 90 * time.Second, false, ""
+		default:
+			// Repeated policy violations or another close with a reason:
+			// some request whisk sends may be at fault.
+			return 30 * time.Second, false, ""
+		}
+	case 1009:
+		// A frame over the size bound: whisk refuses oversized frames
+		// before sending, so this is unexpected; wait a while.
+		return 30 * time.Second, false, ""
+	case 1011:
+		// "Delivery failed/interrupted; reconnect to recover": ordinary.
+		return 0, false, ""
+	case 1013:
+		// Address frame rate (over about 120 frames a minute from one
+		// address, all connections together) or a server-wide budget:
+		// the table says minutes of backoff, not an immediate reconnect.
+		wait := 2 * time.Minute
+		if strings.Contains(reason, "daily") {
+			wait = 5 * time.Minute
+		}
+		return wait, false, ""
+	default:
+		return 0, false, ""
+	}
 }
 
 // errMessage renders an error for the status line.
@@ -253,9 +403,16 @@ func (m *Model) onServerError(s *session, e *protocol.Error) []tea.Cmd {
 		m.chat.dirty = true
 		return nil
 	case protocol.ErrRetryAfter:
+		// A retry_after the server sent on its own: the connection usually
+		// stays open (a server-wide frame budget drops notifications
+		// instead), so this only raises the floor of the next reconnect's
+		// wait. Never retry sooner than it says.
 		if d := e.RetryAfterSeconds(); d > 0 {
-			s.retryAfter = time.Duration(d * float64(time.Second))
-			m.sessStatus(s, fmt.Sprintf("%s — waiting %s before reconnecting", e.Message, s.retryAfter.Round(time.Second)), true)
+			delay := time.Duration(d * float64(time.Second))
+			if delay > s.retryAfter {
+				s.retryAfter = delay
+			}
+			m.sessStatus(s, fmt.Sprintf("%s — at least %s before reconnecting", e.Message, s.retryAfter.Round(time.Second)), true)
 		} else {
 			m.sessStatus(s, e.Message, true)
 		}
@@ -274,5 +431,9 @@ func (m *Model) startPing(s *session) {
 	if secs <= 0 {
 		return
 	}
+	// The server frame advertises ping in seconds; the pinger sends the
+	// exact text {"method":"ping"} at that interval, which the runtime
+	// answers without counting any frame limit, and watches for silence
+	// about two intervals long to cut a connection whose peer has vanished.
 	s.client.StartPing(time.Duration(secs * float64(time.Second)))
 }

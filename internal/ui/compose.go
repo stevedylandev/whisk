@@ -62,6 +62,13 @@ func (m *Model) sendComposer() tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	if err := protocol.CheckText(text); err != nil {
+		// The server refuses text over 4,096 bytes (too_large); three such
+		// requests in a minute would close the connection. The composer
+		// keeps every byte.
+		m.setStatus(err.Error(), true)
+		return nil
+	}
 	replyTo := m.chat.replyTo
 	editingID := m.chat.editingID
 	m.chat.composer.Reset()
@@ -73,6 +80,18 @@ func (m *Model) sendComposer() tea.Cmd {
 		return m.saveMessage(editingID, text)
 	}
 	return m.dispatchText(text, replyTo)
+}
+
+// requireWrite reports whether writes are allowed here, naming what a
+// read-only user needs to change: guests on a read-only server may only read
+// (you.ext.permissions: {"write": false}), and whisk refuses their writes
+// locally rather than spending requests the server denies.
+func (m *Model) requireWrite() bool {
+	if m.cur().canWrite() {
+		return true
+	}
+	m.setStatus("you can only read here; sign in with a token to post or join rooms", true)
+	return false
 }
 
 // canPostWithoutRoom reports whether a message may be sent with no room_id
@@ -100,6 +119,9 @@ func (m *Model) composeMessage(text string) *protocol.Message {
 
 // sendMessage posts a new message, as a reply when replyTo is set.
 func (m *Model) sendMessage(text, replyTo string) tea.Cmd {
+	if !m.requireWrite() {
+		return nil
+	}
 	params := m.composeMessage(text)
 	if params == nil {
 		m.setStatus("no room selected; join or pick a room first", true)
@@ -115,6 +137,9 @@ func (m *Model) sendMessage(text, replyTo string) tea.Cmd {
 // with their embed_ids, so editing a reply keeps the relationship and editing
 // an attachment keeps the embed.
 func (m *Model) saveMessage(id, text string) tea.Cmd {
+	if !m.requireWrite() {
+		return nil
+	}
 	existing := m.cur().store.MessageByID(id)
 	if existing == nil {
 		m.setStatus("message no longer available", true)
@@ -128,7 +153,13 @@ func (m *Model) saveMessage(id, text string) tea.Cmd {
 	return requestCmd(m.cur(), "message", "message", *save)
 }
 
+// sendCommand sends one /-command to the server when it advertises
+// "command" (§4.1). A command is a message, so a user who may only write
+// (ext:permissions) cannot run any; whisk refuses locally.
 func (m *Model) sendCommand(text, replyTo string) tea.Cmd {
+	if !m.requireWrite() {
+		return nil
+	}
 	roomID := m.chat.roomID
 	params := protocol.Message{
 		RoomID: roomID,
@@ -180,15 +211,26 @@ func buildSave(existing *protocol.Message, roomID, text string, newMentions []st
 }
 
 // Upload size caps (§4.8.3). An image may be read up to maxImageReadSize,
-// since compressImage shrinks it below maxImageUploadSize before sending.
+// since compressImage shrinks it below maxImageUploadSize before sending;
+// smaller local caps exist meanwhile. The server's own ext.media declares
+// per-type max_bytes, which always wins when it is smaller.
 const (
 	maxUploadSize    = 20 << 20
 	maxImageReadSize = 50 << 20
 )
 
+// uploadKind selects the ext.media table a file belongs in: the upload
+// embeds of messages (attachments) and the /avatar command's image.
+type uploadKind int
+
+const (
+	mediaUpload uploadKind = iota
+	mediaAvatar
+)
+
 // readUploadFile reads a local file for an upload embed, enforcing the size
 // caps (§4.8.3). Images over maxImageUploadSize are compressed to fit.
-func readUploadFile(path string) (*pendingUpload, error) {
+func readUploadFile(path string, media *protocol.Media, kind uploadKind) (*pendingUpload, error) {
 	// "/attach ~/pic.png" and "/avatar ~/pic.png" accept a leading ~; the
 	// typed path is kept for status messages.
 	local := resolveLocalPath(path)
@@ -220,7 +262,39 @@ func readUploadFile(path string) (*pendingUpload, error) {
 	if len(data) > maxUploadSize {
 		return nil, fmt.Errorf("file too large (%dMB max)", maxUploadSize>>20)
 	}
+	if err := checkMediaKind(media, mimeType, kind, int64(len(data))); err != nil {
+		return nil, err
+	}
 	return &pendingUpload{path: path, name: name, mimeType: mimeType, data: data}, nil
+}
+
+// checkMediaKind checks a red file against what server.ext.media (§4.8,
+// extension ext:media) accepts for its kind: whether that mime type is
+// accepted there, and whether it fits its max_bytes. The base path is kept,
+// so a server that allows large attachments rejects the file before whisk
+// spends a request the server would refuse (too_large or unsupported).
+func checkMediaKind(media *protocol.Media, mimeType string, kind uploadKind, size int64) error {
+	if media == nil {
+		return nil
+	}
+	var table map[string]protocol.MediaAccepted
+	switch kind {
+	case mediaAvatar:
+		table = media.Avatar
+	default:
+		table = media.Upload
+	}
+	if len(table) == 0 {
+		return nil
+	}
+	accepted, ok := table[mimeType]
+	if !ok {
+		return fmt.Errorf("server does not accept %s here", mimeType)
+	}
+	if accepted.MaxBytes > 0 && size > accepted.MaxBytes {
+		return fmt.Errorf("file is %d bytes; the server takes at most %d bytes here", size, accepted.MaxBytes)
+	}
+	return nil
 }
 
 // startUpload reads a local file and posts an upload embed, uploading the
@@ -230,10 +304,10 @@ func (m *Model) startUpload(path, caption string) tea.Cmd {
 		m.setStatus("no room selected; join a room first", true)
 		return nil
 	}
-	if !m.requireCap("embed:upload") {
+	if !m.requireCap("embed:upload") || !m.requireWrite() {
 		return nil
 	}
-	up, err := readUploadFile(path)
+	up, err := readUploadFile(path, protocol.ServerMedia(m.cur().store.Server), mediaUpload)
 	if err != nil {
 		m.setStatus(err.Error(), true)
 		return nil

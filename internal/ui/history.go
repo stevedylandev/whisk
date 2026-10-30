@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -28,8 +29,91 @@ import (
 // A server may reply unsupported (§4.3); whisk then falls back to per-room
 // queries and does not ask again on that session.
 
-// historyPageSize is the limit sent with every history request.
-const historyPageSize = 100
+// historyPageSize is the limit sent with every history request. A page holds
+// at most 50 records (§4.3); whisk asks for that cap, so catching up spends
+// as few requests as possible, and a server may answer fewer.
+const historyPageSize = protocol.HistoryMaxLimit
+
+// historyJob is one pending history request. Only one may be in flight per
+// connection (a second is answered "History request already in progress"),
+// so further requests wait here until the page in flight is applied.
+type historyJob struct {
+	// tag of the request and of the handler that applies its page:
+	// "history", "history_forward", "log_history" or "log_forward".
+	tag    string
+	roomID string
+	// params sent with the request; re-used verbatim on a read retry.
+	params protocol.HistoryParams
+	// tries counts how many times this job was retried after a read rate
+	// limit; at most historyRetryMax.
+	tries int
+}
+
+// historyRetryMax bounds self-retries of a history request a read rate limit
+// delayed; a third read refusal is left for the user's next scroll.
+const historyRetryMax = 2
+
+// queueHistory appends a history request to a session's queue and starts it
+// when the connection is free. The returned command is the request, when one
+// starts now.
+func (m *Model) queueHistory(s *session, tag, roomID string, params protocol.HistoryParams) tea.Cmd {
+	job := historyJob{tag: tag, roomID: roomID, params: params}
+	s.histQueue = append(s.histQueue, job)
+	return m.popHistory(s)
+}
+
+// popHistory sends the oldest queued history request, if the connection is
+// free. It runs when a page lands or when a queued request first appears on
+// an idle connection. A request on a missing connection reports back at once
+// through the usual reply path, which frees the slot again.
+func (m *Model) popHistory(s *session) tea.Cmd {
+	if s.histBusy || len(s.histQueue) == 0 {
+		return nil
+	}
+	job := s.histQueue[0]
+	s.histQueue = s.histQueue[1:]
+	s.histBusy = true
+	s.histInFlight = job
+	if job.tag == "history" || job.tag == "history_forward" {
+		return sessionRequest(s, job.tag, job.roomID, "history", job.params)
+	}
+	return requestCmd(s, job.tag, "history", job.params)
+}
+
+// takeHistInFlight returns the page whose reply is being handled, and clears
+// the slot's record.
+func (s *session) takeHistInFlight() historyJob {
+	job := s.histInFlight
+	s.histInFlight = historyJob{}
+	return job
+}
+
+// popHistoryCmd drains the queue after any history request settles: the slot
+// is free again, so the next queued page is sent.
+func (m *Model) popHistoryCmd(s *session) tea.Cmd {
+	s.histBusy = false
+	return m.popHistory(s)
+}
+
+// retryHistory queues a page a read rate limit delayed again, to be sent
+// after the delay the server asked for, and only historyRetryMax times: the
+// reply must not be demanded sooner than data.retry_after says.
+func (m *Model) retryHistory(s *session, job historyJob, delay time.Duration) tea.Cmd {
+	if job.tries >= historyRetryMax {
+		return nil
+	}
+	job.tries++
+	sid := s.id
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return historyRetryMsg{sid: sid, job: job}
+	})
+}
+
+// historyRetryMsg delivers a delayed history retry once its wait is over.
+type historyRetryMsg struct {
+	sid int
+	job historyJob
+}
 
 // after reports whether log id a is greater than b.
 func after(a, b string) bool { return protocol.LogIDAfter(a, b) }
@@ -37,9 +121,11 @@ func after(a, b string) bool { return protocol.LogIDAfter(a, b) }
 // --- per-room history -------------------------------------------------------
 
 // historyCmd pages a room's log backward from before (the newest page when
-// before is empty).
-func historyCmd(s *session, roomID, before string) tea.Cmd {
-	return sessionRequest(s, "history", roomID, "history", protocol.HistoryParams{
+// before is empty). It joins a session's history queue: at most one history
+// request is in flight per connection, and pages apply in the order they
+// were asked for.
+func (m *Model) historyCmd(s *session, roomID, before string) tea.Cmd {
+	return m.queueHistory(s, "history", roomID, protocol.HistoryParams{
 		RoomID: roomID,
 		Before: before,
 		Limit:  historyPageSize,
@@ -48,8 +134,8 @@ func historyCmd(s *session, roomID, before string) tea.Cmd {
 
 // historyForwardCmd pages a room's log forward from after up to before, for
 // reconnect recovery (§4.3.5).
-func historyForwardCmd(s *session, roomID, after, before string) tea.Cmd {
-	return sessionRequest(s, "history_forward", roomID, "history", protocol.HistoryParams{
+func (m *Model) historyForwardCmd(s *session, roomID, after, before string) tea.Cmd {
+	return m.queueHistory(s, "history_forward", roomID, protocol.HistoryParams{
 		RoomID: roomID,
 		After:  after,
 		Before: before,
@@ -77,7 +163,7 @@ func (m *Model) loadRoomHistory(s *session, roomID string) tea.Cmd {
 	if m.isCur(s) {
 		m.chat.dirty = true
 	}
-	return historyCmd(s, roomID, "")
+	return m.historyCmd(s, roomID, "")
 }
 
 // loadOlder pages the open room (or the combined log) back from its first
@@ -99,7 +185,7 @@ func (m *Model) loadOlder() tea.Cmd {
 	m.captureScrollAnchor()
 	// Do not mark dirty here: the status bar shows "loading…", and the
 	// anchor must survive until the history result arrives.
-	return historyCmd(s, m.chat.roomID, before)
+	return m.historyCmd(s, m.chat.roomID, before)
 }
 
 // onRoomHistory applies a backward page of a room's log.
@@ -138,7 +224,7 @@ func (m *Model) onRoomForward(s *session, roomID string, res *protocol.HistoryRe
 	}
 	if res.More && res.LastLogID != "" {
 		room.Loading = true
-		return historyForwardCmd(s, roomID, protocol.NextLogID(res.LastLogID), room.LatestLogID)
+		return m.historyForwardCmd(s, roomID, protocol.NextLogID(res.LastLogID), room.LatestLogID)
 	}
 	// Caught up: the checkpoint is now H (§4.3.5).
 	room.Checkpoint = room.LatestLogID
@@ -186,7 +272,7 @@ func (m *Model) catchUpRoomsVia(s *session, viaLog bool) []tea.Cmd {
 	for _, id := range forward {
 		r := s.store.Room(id)
 		r.Loading = true
-		cmds = append(cmds, historyForwardCmd(s, id, protocol.NextLogID(r.Checkpoint), r.LatestLogID))
+		cmds = append(cmds, m.historyForwardCmd(s, id, protocol.NextLogID(r.Checkpoint), r.LatestLogID))
 	}
 	return cmds
 }
@@ -194,9 +280,10 @@ func (m *Model) catchUpRoomsVia(s *session, viaLog bool) []tea.Cmd {
 // --- room-less history -----------------------------------------------------
 
 // logHistoryCmd pages the combined log backward from before (newest page when
-// before is empty).
-func logHistoryCmd(s *session, before string) tea.Cmd {
-	return requestCmd(s, "log_history", "history", protocol.HistoryParams{
+// before is empty). It joins the session's history queue too: the room-less
+// query is a history request like any other.
+func (m *Model) logHistoryCmd(s *session, before string) tea.Cmd {
+	return m.queueHistory(s, "log_history", "", protocol.HistoryParams{
 		Before: before,
 		Limit:  historyPageSize,
 	})
@@ -204,8 +291,8 @@ func logHistoryCmd(s *session, before string) tea.Cmd {
 
 // logForwardCmd pages the combined log forward from after (inclusive) up to
 // before (unbounded when empty), for recovery (§4.3.5).
-func logForwardCmd(s *session, after, before string) tea.Cmd {
-	return requestCmd(s, "log_forward", "history", protocol.HistoryParams{
+func (m *Model) logForwardCmd(s *session, after, before string) tea.Cmd {
+	return m.queueHistory(s, "log_forward", "", protocol.HistoryParams{
 		After:  after,
 		Before: before,
 		Limit:  historyPageSize,
@@ -229,9 +316,9 @@ func (m *Model) syncLog(s *session) tea.Cmd {
 	l.Loading = true
 	if l.Loaded && l.Checkpoint != "" {
 		s.logTo = ""
-		return logForwardCmd(s, protocol.NextLogID(l.Checkpoint), "")
+		return m.logForwardCmd(s, protocol.NextLogID(l.Checkpoint), "")
 	}
-	return logHistoryCmd(s, "")
+	return m.logHistoryCmd(s, "")
 }
 
 // loadOlderLog pages the combined log backward from its first loaded record.
@@ -250,7 +337,7 @@ func (m *Model) loadOlderLog(s *session) tea.Cmd {
 		room.Loading = true
 	}
 	m.captureScrollAnchor()
-	return logHistoryCmd(s, before)
+	return m.logHistoryCmd(s, before)
 }
 
 // startLogCatchUp recovers several rooms with one forward stream (R4): from
@@ -278,7 +365,7 @@ func (m *Model) startLogCatchUp(s *session, ids []string) tea.Cmd {
 	s.store.Log.Checkpoint = minCP
 	s.store.Log.Loading = true
 	s.logTo = maxH
-	return logForwardCmd(s, protocol.NextLogID(minCP), maxH)
+	return m.logForwardCmd(s, protocol.NextLogID(minCP), maxH)
 }
 
 // abortLogCatchUp drops a one-stream recovery and returns the rooms it was
@@ -364,7 +451,7 @@ func (m *Model) onLogForward(s *session, raw json.RawMessage) tea.Cmd {
 		s.store.ResetLogContent()
 		m.chat.dirty = true
 		s.store.Log.Loading = true
-		return logHistoryCmd(s, "")
+		return m.logHistoryCmd(s, "")
 	}
 
 	s.store.ApplyLogHistory(&res, true)
@@ -383,7 +470,7 @@ func (m *Model) onLogForward(s *session, raw json.RawMessage) tea.Cmd {
 	}
 	if res.More && res.LastLogID != "" {
 		s.store.Log.Loading = true
-		return logForwardCmd(s, protocol.NextLogID(res.LastLogID), s.logTo)
+		return m.logForwardCmd(s, protocol.NextLogID(res.LastLogID), s.logTo)
 	}
 
 	// Caught up.
@@ -407,29 +494,5 @@ func (m *Model) onLogForward(s *session, raw json.RawMessage) tea.Cmd {
 	return nil
 }
 
-// onLogError handles an error reply to a room-less history request. An
-// unsupported reply (§4.3) turns the room-less query off for the session and
-// falls back to per-room queries.
-func (m *Model) onLogError(s *session, msg requestDoneMsg) tea.Cmd {
-	unsupported := msg.rpcErr != nil && msg.rpcErr.Code == protocol.ErrUnsupported
-	if unsupported {
-		s.logUnsupported = true
-	} else if msg.rpcErr != nil {
-		m.handleRPCError(s, msg)
-	} else {
-		m.sessStatus(s, "history: "+msg.err.Error(), true)
-	}
-	s.store.Log.Loading = false
-	if r := s.store.Room(m.chat.roomID); r != nil && s.logCatchUp == nil {
-		r.Loading = false
-	}
-	if s.logCatchUp != nil {
-		return tea.Batch(m.abortLogCatchUp(s)...)
-	}
-	if unsupported && m.isCur(s) {
-		// A server without rooms: page the room a live message revealed,
-		// if any (otherwise wait for one, §3.4).
-		return m.loadRoomHistory(s, m.chat.roomID)
-	}
-	return nil
-}
+// onLogError is superseded: history error replies are handled by
+// onHistoryError in requests.go.

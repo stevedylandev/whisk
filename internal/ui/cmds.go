@@ -49,17 +49,45 @@ func waitForEvent(sid int, c *client.Client) tea.Cmd {
 }
 
 // sessionRequest runs one request on a session's connection and tags the reply
-// with the session.
+// with the session. The reply carries the method, the request's id and its
+// exact params, so handleRPCError can retry a request a burst limit refused
+// with the same id: the server deduplicates the id and never applies the
+// request twice.
 func sessionRequest(s *session, tag, roomID, method string, params any) tea.Cmd {
+	return sessionRequestWithID(s, tag, roomID, method, protocol.NewID(), params)
+}
+
+// sessionRequestWithID is sessionRequest with an explicit request id.
+func sessionRequestWithID(s *session, tag, roomID, method, id string, params any) tea.Cmd {
 	sid, c := s.id, s.client
+	var rawParams []byte
+	if params != nil {
+		b, err := json.Marshal(params)
+		if err != nil {
+			return func() tea.Msg {
+				return requestDoneMsg{sid: sid, tag: tag, roomID: roomID, err: err}
+			}
+		}
+		rawParams = b
+	}
+	return requestRawMsg(sid, c, tag, roomID, method, id, rawParams)
+}
+
+// requestRawMsg issues a request with an explicit id and raw params on c,
+// either the original send or the retry of one a burst limit delayed, and
+// reports it back as a requestDoneMsg carrying what a later retry needs.
+func requestRawMsg(sid int, c *client.Client, tag, roomID, method, id string, rawParams []byte) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
 			return requestDoneMsg{sid: sid, tag: tag, roomID: roomID, err: errNotConnected}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		result, rpcErr, err := c.Request(ctx, method, params)
-		return requestDoneMsg{sid: sid, tag: tag, roomID: roomID, result: result, rpcErr: rpcErr, err: err}
+		result, rpcErr, err := c.RequestRaw(ctx, method, id, rawParams)
+		return requestDoneMsg{
+			sid: sid, tag: tag, roomID: roomID, c: c, method: method, id: id,
+			rawParams: rawParams, result: result, rpcErr: rpcErr, err: err,
+		}
 	}
 }
 
@@ -146,4 +174,12 @@ type requestDoneMsg struct {
 	result json.RawMessage
 	rpcErr *protocol.Error
 	err    error
+	// What a retry needs: the connection that took the request, its
+	// method, the request id and the exact params. A request a burst limit
+	// refused (retry_after) is retried with the same id, so the server
+	// deduplicates it and never applies it twice.
+	c         *client.Client
+	method    string
+	id        string
+	rawParams []byte
 }
