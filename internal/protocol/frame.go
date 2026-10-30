@@ -74,14 +74,28 @@ func MarshalNotification(method string, params any) ([]byte, error) {
 	return marshalFrame(Frame{Method: method}, params)
 }
 
-// marshalFrame encodes f with params, leaving params out when nil.
+// marshalFrame encodes f with params, leaving params out when nil. Params
+// that are already JSON (json.RawMessage or []byte) are embedded as-is; any
+// other value is marshaled. Re-marshaling a []byte would base64-encode it
+// and the server would answer "Params must be an object".
 func marshalFrame(f Frame, params any) ([]byte, error) {
 	if params != nil {
-		b, err := json.Marshal(params)
-		if err != nil {
-			return nil, err
+		switch p := params.(type) {
+		case json.RawMessage:
+			if len(p) > 0 {
+				f.Params = p
+			}
+		case []byte:
+			if len(p) > 0 {
+				f.Params = json.RawMessage(p)
+			}
+		default:
+			b, err := json.Marshal(params)
+			if err != nil {
+				return nil, err
+			}
+			f.Params = b
 		}
-		f.Params = b
 	}
 	return json.Marshal(f)
 }
